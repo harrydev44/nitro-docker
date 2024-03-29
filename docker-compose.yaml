@@ -44,18 +44,31 @@ services:
     networks:
       nitro:
 
-  orion:
-    container_name: orion
+  php-fpm:
+    container_name: php-fpm
     build:
       context: cms
-    entrypoint: ["/bin/bash","/usr/src/scripts/build.sh"]
+    entrypoint: ["/bin/bash","/var/www/scripts/build.sh"]
     volumes:
-      - ./cms/:/usr/src/
+      - ./cms/:/var/www/
       - volume-orion-cms-vendor:/app/orion-cms/vendor
-    ports:
-      - 2080:2080
     networks:
       nitro:
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./cms/:/var/www/
+      - ./cms/configuration/nginx/orion.conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - 2080:80
+    depends_on:
+      - php-fpm
+    links:
+      - php-fpm
+    networks:
+      nitro:
+
 
   mysql:
     container_name: mysql

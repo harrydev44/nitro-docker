@@ -1,16 +1,17 @@
 #!/bin/bash
 
-cd /usr/src/orion-cms
+cd /var/www/orion-cms
 
-cp /usr/src/configuration/orion-cms/.env /usr/src/orion-cms/.env
+cp /var/www/configuration/orion-cms/.env /var/www/orion-cms/.env
 
 composer install
 yarn install && yarn build
-php artisan key:generate
+
 php artisan migrate --seed
-chown -R www-data:www-data /var/www/cms/
-cd /var/www/cms
+chown -R www-data:www-data /var/www/orion-cms
+cd /var/www/orion-cms
 chmod -R 775 storage
 chmod -R 775 bootstrap/cache
 
-php -S 0.0.0.0:2080 -t public
+echo "PHP-FPM for Orion is ready <3"
+php-fpm
