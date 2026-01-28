@@ -83,3 +83,11 @@ extract-nitro-assets:
   docker exec -it nitro bash -c "echo 'Moving assets...'"
   docker exec -it nitro bash -c "rsync -r /app/nitro-converter/assets/* /app/nitro-assets/"
   docker exec -it nitro bash -c "echo 'Done !'"
+
+# Start the AI service (requires OpenRouter API key in ai-service/.env)
+start-ai:
+  cd ai-service && npm start
+
+# Start AI service in dev mode (auto-restart on changes)
+dev-ai:
+  cd ai-service && npm run dev

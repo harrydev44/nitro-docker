@@ -1,4 +1,49 @@
-.idea
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Process files
 **/*.pid
-emulator/logging
+
+# Emulator
+emulator/logging/
+
+# Nitro assets (large files)
 nitro/nitro-assets/*
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+volumes/
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# AI Service
+ai-service/node_modules/
+ai-service/.env
