@@ -4,8 +4,9 @@ import { agentChat } from '../actions/chat.js';
 import { agentWork } from '../actions/work.js';
 import { agentTrade } from '../actions/trade.js';
 import { agentDecorate } from '../actions/decorate.js';
+import { agentBuy } from '../actions/buy.js';
 import { agentCreateRoom } from '../actions/create-room.js';
-import { getCachedFriends, getCachedEnemies } from '../world/state-cache.js';
+import { getCachedFriends, getCachedEnemies, getCachedInventoryCount } from '../world/state-cache.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
 import type { Agent, WorldState, ActionScore } from '../types.js';
 
@@ -46,6 +47,9 @@ export async function runDecisionEngine(agent: Agent, world: WorldState): Promis
       break;
     case 'decorate':
       await agentDecorate(agent, world);
+      break;
+    case 'buy':
+      await agentBuy(agent, world);
       break;
     case 'create_room':
       await agentCreateRoom(agent, world);
@@ -99,12 +103,24 @@ function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
     scores.push({ action: 'trade', score: tradeScore });
   }
 
-  // DECORATE: owns_room * has_credits
-  if (agent.credits > 100) {
-    const ownsRooms = world.rooms.filter(r => r.ownerId === agent.userId);
-    if (ownsRooms.length > 0) {
-      const decorateScore = 0.2 + goalBonus(agent, 'decorate');
-      scores.push({ action: 'decorate', score: decorateScore });
+  // DECORATE: only when in own room and has credits
+  if (isInRoom && currentRoom!.ownerId === agent.userId && agent.credits > 50) {
+    const invCount = getCachedInventoryCount(agent.userId);
+    const decorateScore = 0.3
+      + (invCount > 0 ? 0.1 : 0)
+      + goalBonus(agent, 'decorate');
+    scores.push({ action: 'decorate', score: decorateScore });
+  }
+
+  // BUY: ambition-driven, buy items for inventory (to trade or decorate)
+  if (agent.credits > 30) {
+    const invCount = getCachedInventoryCount(agent.userId);
+    const lowInventory = invCount < 3;
+    const buyScore = agent.personality.ambition * 0.3
+      + (lowInventory ? 0.3 : 0)
+      + goalBonus(agent, 'trade');
+    if (invCount < CONFIG.MAX_INVENTORY_ITEMS) {
+      scores.push({ action: 'buy', score: buyScore });
     }
   }
 

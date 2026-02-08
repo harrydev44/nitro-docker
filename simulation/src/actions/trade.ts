@@ -88,8 +88,16 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
 
       completeGoal(agent, 'trade');
 
-      // Batch: trade chat
+      // Batch: trade chat — both agents speak
       queueBotChat(agent.id, `Thanks for the trade ${partner.name}!`, CONFIG.MIN_CHAT_DELAY);
+
+      const partnerLines = [
+        `Nice trade, ${agent.name}!`,
+        `Got a great deal!`,
+        `Pleasure doing business, ${agent.name}`,
+        `Thanks ${agent.name}, I needed that!`,
+      ];
+      queueBotChat(partner.id, partnerLines[Math.floor(Math.random() * partnerLines.length)], CONFIG.MIN_CHAT_DELAY);
     }
   }
 

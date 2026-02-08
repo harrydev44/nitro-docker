@@ -13,7 +13,7 @@ export interface Agent {
   ticksWorking: number;
 }
 
-export type AgentState = 'idle' | 'chatting' | 'trading' | 'working' | 'moving' | 'decorating';
+export type AgentState = 'idle' | 'chatting' | 'trading' | 'working' | 'moving' | 'decorating' | 'buying';
 
 export interface PersonalityTraits {
   sociability: number;    // 0-1: how likely to chat
@@ -99,7 +99,7 @@ export interface TradeOffer {
   requestedCredits: number;
 }
 
-export type ActionType = 'move' | 'chat' | 'trade' | 'work' | 'decorate' | 'create_room' | 'idle';
+export type ActionType = 'move' | 'chat' | 'trade' | 'work' | 'decorate' | 'buy' | 'create_room' | 'idle';
 
 export interface ActionScore {
   action: ActionType;

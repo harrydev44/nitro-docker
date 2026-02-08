@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { CONFIG } from './config.js';
-import { closePool, execute } from './db.js';
+import { closePool, execute, query } from './db.js';
 import { ensureSimulationTables } from './db-setup.js';
 import { refreshCache, getAgents, getRooms } from './world/state-cache.js';
 import { flushAll, queueAgentState } from './world/batch-writer.js';
@@ -14,6 +14,46 @@ const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
 
 let running = true;
 let currentTick = 0;
+
+async function seedStartingItems(): Promise<void> {
+  // Check if agents already have inventory items
+  const invCount = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM items i
+     JOIN users u ON i.user_id = u.id
+     WHERE u.username LIKE 'sim_owner_%' AND i.room_id = 0`
+  );
+  if (invCount[0].cnt > 50) {
+    console.log(`[SEED] Agents already have ${invCount[0].cnt} inventory items, skipping seed`);
+    return;
+  }
+
+  // Get all sim_owner user IDs
+  const owners = await query<{ id: number }>(
+    `SELECT id FROM users WHERE username LIKE 'sim_owner_%'`
+  );
+  if (owners.length === 0) return;
+
+  // Give each owner user 5 random items (real furniture from items_base)
+  const itemIds = [18, 30, 39, 17, 22, 40, 199, 57, 35, 28, 29, 41, 128, 163, 165, 13, 14, 144, 173, 56];
+  const values: string[] = [];
+  const params: any[] = [];
+
+  for (const owner of owners) {
+    for (let i = 0; i < CONFIG.STARTING_ITEMS_PER_AGENT; i++) {
+      const itemId = itemIds[Math.floor(Math.random() * itemIds.length)];
+      values.push('(?, 0, ?, 0, 0, 0, 0, \'0\')');
+      params.push(owner.id, itemId);
+    }
+  }
+
+  if (values.length > 0) {
+    await execute(
+      `INSERT INTO items (user_id, room_id, item_id, x, y, z, rot, extra_data) VALUES ${values.join(', ')}`,
+      params
+    );
+    console.log(`[SEED] Gave ${values.length} starting items to ${owners.length} owners`);
+  }
+}
 
 async function tick(world: WorldState): Promise<void> {
   currentTick++;
@@ -89,6 +129,7 @@ async function main(): Promise<void> {
   console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms`);
 
   await ensureSimulationTables();
+  await seedStartingItems();
 
   // Load initial world state via cache
   await refreshCache();

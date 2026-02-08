@@ -73,6 +73,17 @@ async function collectStats(world: WorldState) {
      LIMIT 10`
   );
 
+  // Activity feed: last 20 trade/gift/conflict events with agent names
+  const recentActivity = await query<{ agent_name: string; target_name: string | null; event_type: string; summary: string; created_at: Date }>(
+    `SELECT b.name AS agent_name, b2.name AS target_name, m.event_type, m.summary, m.created_at
+     FROM simulation_agent_memory m
+     JOIN bots b ON m.agent_id = b.id
+     LEFT JOIN bots b2 ON m.target_agent_id = b2.id
+     WHERE m.event_type IN ('trade', 'gift', 'conflict')
+     ORDER BY m.created_at DESC
+     LIMIT 20`
+  );
+
   // Relationship stats
   const totalRelationships = await query<{ cnt: number }>(
     `SELECT COUNT(*) as cnt FROM simulation_relationships WHERE score != 0`
@@ -94,6 +105,13 @@ async function collectStats(world: WorldState) {
     richestAgents: richest,
     popularRooms,
     recentTrades,
+    recentActivity: recentActivity.map(a => ({
+      agentName: a.agent_name,
+      targetName: a.target_name,
+      eventType: a.event_type,
+      summary: a.summary,
+      time: a.created_at,
+    })),
     relationships: {
       total: totalRelationships[0]?.cnt || 0,
       friendships: friendships[0]?.cnt || 0,
