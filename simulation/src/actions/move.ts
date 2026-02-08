@@ -1,7 +1,7 @@
 import { CONFIG } from '../config.js';
 import { getCachedFriends, getCachedEnemies } from '../world/state-cache.js';
 import { queueBotMove } from '../world/batch-writer.js';
-import { getRandomFloorTile } from '../world/room-models.js';
+import { getRandomFreeTile } from '../world/room-models.js';
 import type { Agent, WorldState, SimRoom } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
@@ -11,7 +11,7 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
   if (!targetRoom || targetRoom.id === agent.currentRoomId) return;
   if (targetRoom.currentPopulation >= targetRoom.usersMax) return;
 
-  const { x, y } = getRandomFloorTile(targetRoom.model);
+  const { x, y } = getRandomFreeTile(targetRoom.model, targetRoom.id);
 
   queueBotMove(agent.id, targetRoom.id, x, y);
 

@@ -8,7 +8,7 @@ import { runDecisionEngine } from './engine/decision.js';
 import { updatePopularity } from './world/popularity.js';
 import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
-import { loadRoomModels } from './world/room-models.js';
+import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -62,6 +62,7 @@ async function tick(world: WorldState): Promise<void> {
 
   // 1. Refresh all caches from DB (agents, rooms, relationships, items)
   await refreshCache();
+  await refreshOccupiedTiles();
   world.agents = getAgents();
   world.rooms = getRooms();
 
