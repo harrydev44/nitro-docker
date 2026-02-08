@@ -1,6 +1,7 @@
 import { CONFIG } from '../config.js';
 import { getCachedFriends, getCachedEnemies } from '../world/state-cache.js';
 import { queueBotMove } from '../world/batch-writer.js';
+import { getRandomFloorTile } from '../world/room-models.js';
 import type { Agent, WorldState, SimRoom } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
@@ -10,7 +11,7 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
   if (!targetRoom || targetRoom.id === agent.currentRoomId) return;
   if (targetRoom.currentPopulation >= targetRoom.usersMax) return;
 
-  const { x, y } = getRandomPosition(targetRoom.model);
+  const { x, y } = getRandomFloorTile(targetRoom.model);
 
   queueBotMove(agent.id, targetRoom.id, x, y);
 
@@ -67,18 +68,4 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
     if (roll <= 0) return s.room;
   }
   return top[0].room;
-}
-
-const MODEL_SIZES: Record<string, { maxX: number; maxY: number }> = {
-  model_a: { maxX: 10, maxY: 10 }, model_b: { maxX: 10, maxY: 10 },
-  model_c: { maxX: 12, maxY: 12 }, model_d: { maxX: 12, maxY: 12 },
-  model_e: { maxX: 14, maxY: 14 }, model_f: { maxX: 14, maxY: 14 },
-};
-
-function getRandomPosition(model: string): { x: number; y: number } {
-  const size = MODEL_SIZES[model] || { maxX: 8, maxY: 8 };
-  return {
-    x: 1 + Math.floor(Math.random() * (size.maxX - 1)),
-    y: 1 + Math.floor(Math.random() * (size.maxY - 1)),
-  };
 }

@@ -8,6 +8,7 @@ import { runDecisionEngine } from './engine/decision.js';
 import { updatePopularity } from './world/popularity.js';
 import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
+import { loadRoomModels } from './world/room-models.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
   console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms`);
 
   await ensureSimulationTables();
+  await loadRoomModels();
   await seedStartingItems();
 
   // Load initial world state via cache

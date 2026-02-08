@@ -3,6 +3,7 @@ import { CONFIG } from '../config.js';
 import { getCachedRoomItemCount } from '../world/state-cache.js';
 import { queueBotChat, queueCreditChange } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
+import { getRandomFloorTile } from '../world/room-models.js';
 import type { Agent, WorldState } from '../types.js';
 
 // Real furniture from items_base (type='s' floor items)
@@ -43,8 +44,7 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
     return;
   }
 
-  const x = Math.floor(Math.random() * 8) + 1;
-  const y = Math.floor(Math.random() * 8) + 1;
+  const { x, y } = getRandomFloorTile(room.model);
 
   // Try to place an item from inventory first
   const invItems = await query<{ id: number; item_id: number }>(
