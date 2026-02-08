@@ -1,7 +1,8 @@
 import { CONFIG, JOB_TYPES } from '../config.js';
 import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory, queueAgentState } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
-import type { Agent, WorldState } from '../types.js';
+import { getWorkAnnouncement } from '../chat/announcements.js';
+import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 export async function agentWork(agent: Agent, world: WorldState): Promise<void> {
   if (!agent.currentRoomId) return;
@@ -28,19 +29,10 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
   agent.state = 'working';
   agent.ticksWorking++;
 
-  // Work chat line
-  const workLines = [
-    'Back to work...',
-    'Another day, another credit',
-    `Working as ${jobName}`,
-    'This pays well enough',
-    'Almost done with this shift',
-    'Gotta hustle',
-    'The grind never stops',
-  ];
-  const chatLine = workLines[Math.floor(Math.random() * workLines.length)];
-  if (Math.random() < 0.3) {
-    queueBotChat(agent.id, chatLine, CONFIG.MIN_CHAT_DELAY + 5);
+  // Occasional in-progress work chat (reduced — main announcement is on completion)
+  if (Math.random() < 0.1) {
+    const workLines = ['Back to work...', 'Gotta hustle', 'The grind never stops', `Working as ${jobName}`];
+    queueBotChat(agent.id, workLines[Math.floor(Math.random() * workLines.length)], CONFIG.MIN_CHAT_DELAY + 5);
   }
 
   // Build relationships with coworkers
@@ -55,10 +47,23 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
   const boredomThreshold = CONFIG.WORK_BOREDOM_MIN_TICKS +
     Math.floor(Math.random() * (CONFIG.WORK_BOREDOM_MAX_TICKS - CONFIG.WORK_BOREDOM_MIN_TICKS));
   if (agent.ticksWorking >= boredomThreshold) {
+    const totalEarned = agent.ticksWorking * pay;
     agent.state = 'idle';
     agent.ticksWorking = 0;
     completeGoal(agent, 'work');
     completeGoal(agent, 'earn');
+
+    // Announce work completion with personality flavor
+    if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+      const msg = getWorkAnnouncement(agent, jobName, room.name, totalEarned);
+      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+
+      if (agent.currentRoomId) {
+        const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };
+        if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+        world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+      }
+    }
 
     queueMemory({
       agentId: agent.id, targetAgentId: null,

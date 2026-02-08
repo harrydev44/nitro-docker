@@ -9,6 +9,7 @@ import { updatePopularity } from './world/popularity.js';
 import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
 import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
+import { loadItemCatalog } from './world/item-catalog.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
 
   await ensureSimulationTables();
   await loadRoomModels();
+  await loadItemCatalog();
   await seedStartingItems();
 
   // Load initial world state via cache

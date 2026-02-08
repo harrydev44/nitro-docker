@@ -62,6 +62,14 @@ export const CONFIG = {
   AVOID_WEIGHT: 0.1,
   ROOM_INERTIA_PROBABILITY: 0.4,  // chance to stay in current room
 
+  // Social dynamics settings
+  ANNOUNCEMENT_PROBABILITY: 0.3,       // chance to announce after action
+  REACTION_PROBABILITY: 0.6,           // chance to react to announcement
+  MEMORY_GOSSIP_PROBABILITY: 0.15,     // chance to gossip from memory
+  HOME_ROOM_VISIT_THRESHOLD: 5,        // visits to establish home room
+  HOME_ROOM_SCORE_BONUS: 0.4,          // move scoring bonus for home room
+  CLOSE_FRIEND_FOLLOW_BONUS: 0.3,      // bonus when close friend just moved there
+
   // Stats HTTP server
   STATS_PORT: 3333,
 } as const;

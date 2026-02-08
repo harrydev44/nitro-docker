@@ -34,6 +34,16 @@ export function startStatsServer(world: WorldState): void {
 }
 
 async function collectStats(world: WorldState) {
+  // Build name→moltbookUrl lookup from agents
+  const moltbookUrlMap = new Map<string, string>();
+  const moltbookUrlByIdMap = new Map<number, string>();
+  for (const agent of world.agents) {
+    if (agent.moltbookUrl) {
+      moltbookUrlMap.set(agent.name, agent.moltbookUrl);
+      moltbookUrlByIdMap.set(agent.id, agent.moltbookUrl);
+    }
+  }
+
   // Room populations
   const roomStats = world.rooms
     .filter(r => r.currentPopulation > 0)
@@ -95,6 +105,43 @@ async function collectStats(world: WorldState) {
     `SELECT COUNT(*) as cnt FROM simulation_relationships WHERE score <= ${CONFIG.RELATIONSHIP_RIVAL_THRESHOLD}`
   );
 
+  // Social stats: most social agents
+  const mostSocial = await query<{ agent_id: number; name: string; total_interactions: number }>(
+    `SELECT r.agent_id, b.name, SUM(r.interaction_count) as total_interactions
+     FROM simulation_relationships r
+     JOIN bots b ON r.agent_id = b.id
+     GROUP BY r.agent_id, b.name
+     ORDER BY total_interactions DESC
+     LIMIT 10`
+  );
+
+  // Social stats: communities (rooms grouped by homeRoomId count)
+  const communities: { roomId: number; roomName: string; residents: number }[] = [];
+  const homeRoomCounts = new Map<number, number>();
+  for (const agent of world.agents) {
+    const homeId = agent.preferences.homeRoomId;
+    if (homeId) {
+      homeRoomCounts.set(homeId, (homeRoomCounts.get(homeId) || 0) + 1);
+    }
+  }
+  for (const [roomId, count] of homeRoomCounts) {
+    const room = world.rooms.find(r => r.id === roomId);
+    if (room && count >= 2) {
+      communities.push({ roomId, roomName: room.name, residents: count });
+    }
+  }
+  communities.sort((a, b) => b.residents - a.residents);
+
+  // Recent announcements from memory
+  const recentAnnouncements = await query<{ agent_name: string; summary: string; created_at: Date }>(
+    `SELECT b.name AS agent_name, m.summary, m.created_at
+     FROM simulation_agent_memory m
+     JOIN bots b ON m.agent_id = b.id
+     WHERE m.event_type = 'announcement'
+     ORDER BY m.created_at DESC
+     LIMIT 20`
+  );
+
   return {
     tick: world.tick,
     totalAgents: world.agents.length,
@@ -102,7 +149,10 @@ async function collectStats(world: WorldState) {
     totalRooms: world.rooms.length,
     activeRooms: roomStats.length,
     roomStats,
-    richestAgents: richest,
+    richestAgents: richest.map(a => ({
+      ...a,
+      moltbookUrl: moltbookUrlMap.get(a.name),
+    })),
     popularRooms,
     recentTrades,
     recentActivity: recentActivity.map(a => ({
@@ -111,11 +161,28 @@ async function collectStats(world: WorldState) {
       eventType: a.event_type,
       summary: a.summary,
       time: a.created_at,
+      agentMoltbookUrl: moltbookUrlMap.get(a.agent_name),
+      targetMoltbookUrl: a.target_name ? moltbookUrlMap.get(a.target_name) : undefined,
     })),
     relationships: {
       total: totalRelationships[0]?.cnt || 0,
       friendships: friendships[0]?.cnt || 0,
       rivalries: rivalries[0]?.cnt || 0,
+    },
+    social: {
+      mostSocial: mostSocial.map(s => ({
+        agentId: s.agent_id,
+        name: s.name,
+        totalInteractions: Number(s.total_interactions),
+        moltbookUrl: moltbookUrlByIdMap.get(s.agent_id),
+      })),
+      communities: communities.slice(0, 10),
+      recentAnnouncements: recentAnnouncements.map(a => ({
+        agentName: a.agent_name,
+        summary: a.summary,
+        time: a.created_at,
+        moltbookUrl: moltbookUrlMap.get(a.agent_name),
+      })),
     },
   };
 }

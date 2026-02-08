@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import type { Agent, SimRoom, Relationship, PersonalityTraits, AgentPreferences, RoomPurpose } from '../types.js';
+import type { Agent, SimRoom, Relationship, PersonalityTraits, AgentPreferences, RoomPurpose, CachedMemory } from '../types.js';
 
 // In-memory caches loaded once per tick
 let agentCache: Agent[] = [];
@@ -7,14 +7,17 @@ let roomCache: SimRoom[] = [];
 let relationshipCache: Map<string, Relationship> = new Map(); // "agentId:targetId" -> Relationship
 let friendsCache: Map<number, number[]> = new Map();
 let enemiesCache: Map<number, number[]> = new Map();
+let closeFriendsCache: Map<number, number[]> = new Map(); // score >= 50
 let itemCountCache: Map<number, number> = new Map(); // userId -> item count in inventory
 let roomItemCountCache: Map<number, number> = new Map(); // roomId -> item count
+let memoryCache: CachedMemory[] = []; // recent memories for gossip
 
 interface BotRow {
   id: number;
   user_id: number;
   room_id: number;
   name: string;
+  motto: string;
 }
 
 interface AgentStateRow {
@@ -48,7 +51,7 @@ interface RelRow {
 export async function refreshCache(): Promise<void> {
   // Load all bots in one query
   const bots = await query<BotRow>(
-    `SELECT b.id, b.user_id, b.room_id, b.name
+    `SELECT b.id, b.user_id, b.room_id, b.name, b.motto
      FROM bots b JOIN users u ON b.user_id = u.id
      WHERE u.username LIKE 'sim_owner_%' ORDER BY b.id`
   );
@@ -74,6 +77,9 @@ export async function refreshCache(): Promise<void> {
       socialCircleSize: 5,
       wealthGoal: 3000,
     };
+    const moltbookUrl = bot.motto?.startsWith('moltbook.com/u/')
+      ? `https://www.${bot.motto}`
+      : undefined;
     return {
       id: bot.id,
       userId: bot.user_id,
@@ -87,6 +93,7 @@ export async function refreshCache(): Promise<void> {
       ticksSinceLastAction: 0,
       ticksInCurrentRoom: state?.ticks_in_room || 0,
       ticksWorking: state?.ticks_working || 0,
+      moltbookUrl,
     };
   });
 
@@ -127,6 +134,7 @@ export async function refreshCache(): Promise<void> {
   relationshipCache.clear();
   friendsCache.clear();
   enemiesCache.clear();
+  closeFriendsCache.clear();
 
   for (const rel of rels) {
     const key = `${rel.agent_id}:${rel.target_agent_id}`;
@@ -138,10 +146,14 @@ export async function refreshCache(): Promise<void> {
       lastInteraction: rel.last_interaction,
     });
 
-    // Build friends/enemies lists
+    // Build friends/enemies/close friends lists
     if (rel.score >= 20) {
       if (!friendsCache.has(rel.agent_id)) friendsCache.set(rel.agent_id, []);
       friendsCache.get(rel.agent_id)!.push(rel.target_agent_id);
+    }
+    if (rel.score >= 50) {
+      if (!closeFriendsCache.has(rel.agent_id)) closeFriendsCache.set(rel.agent_id, []);
+      closeFriendsCache.get(rel.agent_id)!.push(rel.target_agent_id);
     }
     if (rel.score <= -10) {
       if (!enemiesCache.has(rel.agent_id)) enemiesCache.set(rel.agent_id, []);
@@ -159,6 +171,20 @@ export async function refreshCache(): Promise<void> {
     `SELECT room_id, COUNT(*) as cnt FROM items WHERE room_id > 0 GROUP BY room_id`
   );
   roomItemCountCache = new Map(roomItems.map(i => [i.room_id, i.cnt]));
+
+  // Load recent memories for gossip (last 5 minutes, capped at 500)
+  const recentMems = await query<{ agent_id: number; target_agent_id: number | null; event_type: string; summary: string }>(
+    `SELECT agent_id, target_agent_id, event_type, summary
+     FROM simulation_agent_memory
+     WHERE created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+     ORDER BY created_at DESC LIMIT 500`
+  );
+  memoryCache = recentMems.map(m => ({
+    agentId: m.agent_id,
+    targetAgentId: m.target_agent_id,
+    eventType: m.event_type as CachedMemory['eventType'],
+    summary: m.summary,
+  }));
 }
 
 // --- Cache accessors (no DB calls) ---
@@ -184,4 +210,12 @@ export function getCachedInventoryCount(userId: number): number {
 
 export function getCachedRoomItemCount(roomId: number): number {
   return roomItemCountCache.get(roomId) || 0;
+}
+
+export function getCachedCloseFriends(agentId: number): number[] {
+  return closeFriendsCache.get(agentId) || [];
+}
+
+export function getCachedMemories(): CachedMemory[] {
+  return memoryCache;
 }

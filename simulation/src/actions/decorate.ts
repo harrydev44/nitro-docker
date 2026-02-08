@@ -4,7 +4,9 @@ import { getCachedRoomItemCount } from '../world/state-cache.js';
 import { queueBotChat, queueCreditChange } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import { getRandomFurniTile } from '../world/room-models.js';
-import type { Agent, WorldState } from '../types.js';
+import { getDecorateAnnouncement } from '../chat/announcements.js';
+import { getItemName } from '../world/item-catalog.js';
+import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 // Real furniture from items_base (type='s' floor items)
 const FURNITURE_CATALOG = [
@@ -59,8 +61,16 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
       [room.id, pos.x, pos.y, pos.rot || 0, item.id]
     );
 
-    if (Math.random() < 0.3) {
-      queueBotChat(agent.id, `Placed some new furniture in my room!`, CONFIG.MIN_CHAT_DELAY);
+    if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+      const furniName = getItemName(item.item_id);
+      const msg = getDecorateAnnouncement(agent, furniName, itemCount + 1);
+      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+
+      if (agent.currentRoomId) {
+        const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };
+        if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+        world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+      }
     }
   } else {
     // No inventory — buy from catalog and place directly
@@ -80,8 +90,16 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
       [agent.userId, room.id, item.itemId, pos.x, pos.y, pos.rot || 0]
     );
 
-    if (Math.random() < 0.3) {
-      queueBotChat(agent.id, `Just added a new ${item.name} to my room!`, CONFIG.MIN_CHAT_DELAY);
+    if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+      const furniName = getItemName(item.itemId);
+      const msg = getDecorateAnnouncement(agent, furniName, itemCount + 1);
+      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+
+      if (agent.currentRoomId) {
+        const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };
+        if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+        world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+      }
     }
   }
 

@@ -10,7 +10,8 @@
     "dev": "tsx watch src/index.ts",
     "generate-agents": "tsx src/scripts/generate.ts",
     "setup-world": "tsx src/scripts/setup-world.ts",
-    "reset": "tsx src/scripts/reset.ts"
+    "reset": "tsx src/scripts/reset.ts",
+    "fetch-moltbook": "tsx src/scripts/fetch-moltbook.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

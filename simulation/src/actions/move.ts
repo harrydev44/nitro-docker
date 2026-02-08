@@ -1,8 +1,9 @@
 import { CONFIG } from '../config.js';
-import { getCachedFriends, getCachedEnemies } from '../world/state-cache.js';
-import { queueBotMove } from '../world/batch-writer.js';
+import { getCachedFriends, getCachedEnemies, getCachedCloseFriends } from '../world/state-cache.js';
+import { queueBotMove, queueBotChat } from '../world/batch-writer.js';
 import { getRandomFreeTile } from '../world/room-models.js';
-import type { Agent, WorldState, SimRoom } from '../types.js';
+import { getHomeRoomEnterChat, getHomeRoomWelcomeChat } from '../chat/announcements.js';
+import type { Agent, WorldState, SimRoom, ChatMessage } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
   if (agent.currentRoomId && Math.random() < CONFIG.ROOM_INERTIA_PROBABILITY) return;
@@ -24,6 +25,59 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
   agent.currentRoomId = targetRoom.id;
   agent.ticksInCurrentRoom = 0;
   agent.state = 'idle';
+
+  // Track home room visits
+  trackHomeRoom(agent, targetRoom.id);
+
+  // Home room chat
+  if (agent.preferences.homeRoomId === targetRoom.id) {
+    if (Math.random() < 0.3) {
+      queueBotChat(agent.id, getHomeRoomEnterChat(), CONFIG.MIN_CHAT_DELAY);
+    }
+
+    // Welcome close friends who are already in the room
+    const closeFriends = getCachedCloseFriends(agent.id);
+    const friendsHere = world.agents.filter(
+      a => a.currentRoomId === targetRoom.id && closeFriends.includes(a.id)
+    );
+    for (const friend of friendsHere.slice(0, 1)) {
+      if (Math.random() < 0.4) {
+        const welcomeMsg = getHomeRoomWelcomeChat(agent.name);
+        queueBotChat(friend.id, welcomeMsg, CONFIG.MIN_CHAT_DELAY + 2);
+
+        // Track welcome in chat history
+        const chatMsg: ChatMessage = { agentId: friend.id, agentName: friend.name, message: welcomeMsg, tick: world.tick };
+        if (!world.roomChatHistory.has(targetRoom.id)) world.roomChatHistory.set(targetRoom.id, []);
+        world.roomChatHistory.get(targetRoom.id)!.push(chatMsg);
+      }
+    }
+  }
+}
+
+// lastVisitedRoomId per agent — transient, not persisted, tracks consecutive visits for home room detection
+const lastVisitedRoom: Map<number, number> = new Map();
+
+function trackHomeRoom(agent: Agent, roomId: number): void {
+  if (agent.preferences.homeRoomId === roomId) {
+    // Already home room — just keep visiting
+    return;
+  }
+
+  const lastRoom = lastVisitedRoom.get(agent.id);
+  if (lastRoom === roomId) {
+    // Same room as last visit — increment consecutive counter
+    agent.preferences.homeRoomVisits = (agent.preferences.homeRoomVisits || 1) + 1;
+
+    if (agent.preferences.homeRoomVisits >= CONFIG.HOME_ROOM_VISIT_THRESHOLD) {
+      agent.preferences.homeRoomId = roomId;
+      agent.preferences.homeRoomVisits = 0;
+    }
+  } else {
+    // Different room — reset counter
+    agent.preferences.homeRoomVisits = 1;
+  }
+
+  lastVisitedRoom.set(agent.id, roomId);
 }
 
 function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
@@ -32,6 +86,7 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
 
   const friends = getCachedFriends(agent.id);
   const enemies = getCachedEnemies(agent.id);
+  const closeFriends = getCachedCloseFriends(agent.id);
 
   const scored = rooms.map(room => {
     let score = 0;
@@ -45,6 +100,18 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
     ).length;
     score += Math.min(friendsInRoom / 5, 1) * CONFIG.FRIEND_PRESENCE_WEIGHT;
 
+    // Close friend bonus: extra weight per close friend in room
+    const closeFriendsInRoom = world.agents.filter(
+      a => a.currentRoomId === room.id && closeFriends.includes(a.id)
+    );
+    score += closeFriendsInRoom.length * 0.15;
+
+    // Following behavior: if a close friend just moved to this room, extra bonus
+    const friendJustMoved = closeFriendsInRoom.some(a => a.ticksInCurrentRoom <= 1);
+    if (friendJustMoved) {
+      score += CONFIG.CLOSE_FRIEND_FOLLOW_BONUS;
+    }
+
     const popFactor = Math.min(room.currentPopulation / 10, 1);
     score += popFactor * agent.personality.curiosity * CONFIG.CURIOSITY_WEIGHT;
 
@@ -52,6 +119,11 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
       a => a.currentRoomId === room.id && enemies.includes(a.id)
     ).length;
     score -= enemiesInRoom * CONFIG.AVOID_WEIGHT;
+
+    // Home room bonus
+    if (agent.preferences.homeRoomId === room.id) {
+      score += CONFIG.HOME_ROOM_SCORE_BONUS;
+    }
 
     score += Math.random() * 0.1;
     return { room, score };

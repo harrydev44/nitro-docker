@@ -2,7 +2,8 @@ import { execute, query } from '../db.js';
 import { CONFIG } from '../config.js';
 import { queueBotChat, queueCreditChange } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
-import type { Agent, WorldState, RoomPurpose } from '../types.js';
+import { getRoomCreateAnnouncement } from '../chat/announcements.js';
+import type { Agent, WorldState, RoomPurpose, ChatMessage } from '../types.js';
 
 const ROOM_NAME_PREFIXES = [
   'Cool', 'Epic', 'Chill', 'Funky', 'The', 'Club', 'Pixel', 'Retro',
@@ -75,8 +76,15 @@ export async function agentCreateRoom(agent: Agent, world: WorldState): Promise<
 
   completeGoal(agent, 'decorate');
 
-  // Batch: chat about new room
-  queueBotChat(agent.id, `Just created my new ${chosenPurpose} room: ${roomName}!`, CONFIG.MIN_CHAT_DELAY);
+  // Personality-flavored room creation announcement
+  const msg = getRoomCreateAnnouncement(agent, roomName);
+  queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+
+  if (agent.currentRoomId) {
+    const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };
+    if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+    world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+  }
 
   console.log(`[ROOM] Agent ${agent.name} created room "${roomName}" (${chosenPurpose})`);
 }

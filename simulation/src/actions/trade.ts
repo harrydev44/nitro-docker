@@ -3,7 +3,9 @@ import { CONFIG } from '../config.js';
 import { getCachedRelationship } from '../world/state-cache.js';
 import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
-import type { Agent, WorldState } from '../types.js';
+import { getTradeAnnouncement, getTradeBuyerAnnouncement } from '../chat/announcements.js';
+import { getItemName } from '../world/item-catalog.js';
+import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 interface ItemRow {
   id: number;
@@ -88,16 +90,30 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
 
       completeGoal(agent, 'trade');
 
-      // Batch: trade chat — both agents speak
-      queueBotChat(agent.id, `Thanks for the trade ${partner.name}!`, CONFIG.MIN_CHAT_DELAY);
+      // Announcement-style trade chat with item names and personality flavor
+      const itemName = getItemName(offeredItem.item_id);
+      if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+        const sellerMsg = getTradeAnnouncement(agent, partner.name, itemName, price);
+        queueBotChat(agent.id, sellerMsg, CONFIG.MIN_CHAT_DELAY);
 
-      const partnerLines = [
-        `Nice trade, ${agent.name}!`,
-        `Got a great deal!`,
-        `Pleasure doing business, ${agent.name}`,
-        `Thanks ${agent.name}, I needed that!`,
-      ];
-      queueBotChat(partner.id, partnerLines[Math.floor(Math.random() * partnerLines.length)], CONFIG.MIN_CHAT_DELAY);
+        // Track as announcement in room chat history
+        if (agent.currentRoomId) {
+          const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: sellerMsg, tick: world.tick, isAnnouncement: true };
+          if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+          world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+        }
+      }
+
+      if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+        const buyerMsg = getTradeBuyerAnnouncement(partner, agent.name, itemName, price);
+        queueBotChat(partner.id, buyerMsg, CONFIG.MIN_CHAT_DELAY + 2);
+
+        if (agent.currentRoomId) {
+          const chatMsg: ChatMessage = { agentId: partner.id, agentName: partner.name, message: buyerMsg, tick: world.tick, isAnnouncement: true };
+          if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
+          world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
+        }
+      }
     }
   }
 

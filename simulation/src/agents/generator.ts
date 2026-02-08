@@ -1,6 +1,6 @@
 import { execute, query } from '../db.js';
 import { CONFIG } from '../config.js';
-import { AGENT_NAMES } from './names.js';
+import { AGENT_NAMES, MOLTBOOK_AGENTS } from './names.js';
 import { generateFigure, generateGender } from './figures.js';
 import { generatePersonality, generatePreferences, generateInitialCredits } from './personalities.js';
 
@@ -54,14 +54,15 @@ export async function generateAllAgents(): Promise<void> {
 
     const figure = generateFigure();
     const gender = generateGender();
-    const personality = generatePersonality();
+    const moltAgent = MOLTBOOK_AGENTS[i];
+    const personality = moltAgent?.personality ?? generatePersonality();
     const preferences = generatePreferences(personality);
+    const motto = moltAgent ? `moltbook.com/u/${moltAgent.name}` : `AI Agent`;
 
     const result = await execute(
       `INSERT INTO bots (user_id, room_id, name, motto, figure, gender, x, y, z, rot, chat_lines, chat_auto, chat_random, chat_delay, freeroam, type, effect, bubble_id)
        VALUES (?, 0, ?, ?, ?, ?, 0, 0, 0, 0, '', '1', '1', ?, '0', 'generic', 0, 0)`,
-      [ownerId, name, `AI Agent - ${personality.sociability > 0.7 ? 'Social' : personality.ambition > 0.7 ? 'Ambitious' : 'Explorer'}`,
-       figure, gender, CONFIG.MIN_CHAT_DELAY]
+      [ownerId, name, motto, figure, gender, CONFIG.MIN_CHAT_DELAY]
     );
 
     // Create agent state record

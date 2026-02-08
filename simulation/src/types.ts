@@ -11,6 +11,7 @@ export interface Agent {
   ticksSinceLastAction: number;
   ticksInCurrentRoom: number;
   ticksWorking: number;
+  moltbookUrl?: string;
 }
 
 export type AgentState = 'idle' | 'chatting' | 'trading' | 'working' | 'moving' | 'decorating' | 'buying';
@@ -27,6 +28,8 @@ export interface AgentPreferences {
   preferredRoomTypes: RoomPurpose[];
   socialCircleSize: number;  // how many friends they maintain
   wealthGoal: number;        // target credits
+  homeRoomId?: number;       // room agent returns to most often
+  homeRoomVisits?: number;   // consecutive visits to track home room
 }
 
 export interface Goal {
@@ -73,7 +76,7 @@ export interface Memory {
   createdAt: Date;
 }
 
-export type MemoryEventType = 'chat' | 'trade' | 'work_together' | 'gift' | 'conflict' | 'room_visit';
+export type MemoryEventType = 'chat' | 'trade' | 'work_together' | 'gift' | 'conflict' | 'room_visit' | 'announcement';
 
 export interface Relationship {
   agentId: number;
@@ -119,6 +122,14 @@ export interface ChatMessage {
   agentName: string;
   message: string;
   tick: number;
+  isAnnouncement?: boolean;
+}
+
+export interface CachedMemory {
+  agentId: number;
+  targetAgentId: number | null;
+  eventType: MemoryEventType;
+  summary: string;
 }
 
 export interface JobSlot {

@@ -35,6 +35,49 @@ export function generatePersonality(): PersonalityTraits {
   };
 }
 
+/** Derive personality from Moltbook profile data */
+export function deriveMoltbookPersonality(profile: {
+  follower_count?: number;
+  following_count?: number;
+  karma?: number;
+  postCount?: number;
+  description?: string;
+}): PersonalityTraits {
+  const desc = (profile.description || '').toLowerCase();
+
+  const POSITIVE_WORDS = [
+    'help', 'friend', 'kind', 'love', 'support', 'happy', 'joy', 'peace', 'care',
+    'welcome', 'share', 'community', 'collaborate', 'together', 'nice', 'good',
+    'positive', 'gentle', 'warm', 'open', 'trust', 'fun', 'create', 'inspire',
+  ];
+  const CURIOSITY_WORDS = [
+    'explore', 'learn', 'research', 'discover', 'experiment', 'curious', 'study',
+    'investigate', 'analyze', 'question', 'wonder', 'new', 'novel', 'innovate',
+  ];
+
+  const sociability = jitter(
+    clamp((profile.follower_count || 0) / 50 + (profile.following_count || 0) / 20, 0.1, 0.95)
+  );
+  const ambition = jitter(
+    clamp((profile.karma || 0) / 400, 0.1, 0.95)
+  );
+  const curiosityKeywordBonus = CURIOSITY_WORDS.reduce(
+    (sum, w) => sum + (desc.includes(w) ? 0.08 : 0), 0
+  );
+  const curiosity = jitter(
+    clamp((profile.postCount || 0) / 15 + curiosityKeywordBonus, 0.1, 0.95)
+  );
+  const positiveWordScore = POSITIVE_WORDS.reduce(
+    (sum, w) => sum + (desc.includes(w) ? 0.06 : 0), 0
+  );
+  const friendliness = jitter(
+    clamp(0.5 + positiveWordScore, 0.1, 0.95)
+  );
+  const impulsiveness = jitter(0.5, 0.3);
+
+  return { sociability, ambition, curiosity, friendliness, impulsiveness };
+}
+
 export function generatePreferences(personality: PersonalityTraits): AgentPreferences {
   const roomTypes: RoomPurpose[] = [];
 
