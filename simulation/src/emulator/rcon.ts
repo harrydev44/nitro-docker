@@ -50,3 +50,12 @@ export async function rconBotTalk(botId: number, message: string): Promise<boole
     return false;
   }
 }
+
+export async function rconBotDance(botId: number, danceId: number): Promise<boolean> {
+  try {
+    const res = await sendRCON('botdance', { bot_id: botId, dance_id: danceId });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}

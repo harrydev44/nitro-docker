@@ -14,7 +14,7 @@ export interface Agent {
   moltbookUrl?: string;
 }
 
-export type AgentState = 'idle' | 'chatting' | 'trading' | 'working' | 'moving' | 'decorating' | 'buying';
+export type AgentState = 'idle' | 'chatting' | 'trading' | 'working' | 'moving' | 'decorating' | 'buying' | 'drama';
 
 export interface PersonalityTraits {
   sociability: number;    // 0-1: how likely to chat
@@ -76,7 +76,7 @@ export interface Memory {
   createdAt: Date;
 }
 
-export type MemoryEventType = 'chat' | 'trade' | 'work_together' | 'gift' | 'conflict' | 'room_visit' | 'announcement';
+export type MemoryEventType = 'chat' | 'trade' | 'work_together' | 'gift' | 'conflict' | 'room_visit' | 'announcement' | 'reunion' | 'argument';
 
 export interface Relationship {
   agentId: number;
@@ -102,7 +102,7 @@ export interface TradeOffer {
   requestedCredits: number;
 }
 
-export type ActionType = 'move' | 'chat' | 'trade' | 'work' | 'decorate' | 'buy' | 'create_room' | 'idle';
+export type ActionType = 'move' | 'chat' | 'trade' | 'work' | 'decorate' | 'buy' | 'create_room' | 'drama' | 'host_party' | 'idle';
 
 export interface ActionScore {
   action: ActionType;
@@ -110,11 +110,32 @@ export interface ActionScore {
   targetId?: number;
 }
 
+export interface ActiveConversation {
+  roomId: number;
+  participants: Set<number>;
+  lastTick: number;
+  exchangeCount: number;
+  lastMessage: string;
+  lastSpeakerId: number;
+  lastSpeakerName: string;
+}
+
+export interface ActiveParty {
+  roomId: number;
+  hostAgentId: number;
+  hostName: string;
+  startTick: number;
+  endTick: number;
+  attendees: Set<number>;
+}
+
 export interface WorldState {
   rooms: SimRoom[];
   agents: Agent[];
   tick: number;
   roomChatHistory: Map<number, ChatMessage[]>;
+  activeConversations: Map<number, ActiveConversation>;
+  activeParties: ActiveParty[];
 }
 
 export interface ChatMessage {

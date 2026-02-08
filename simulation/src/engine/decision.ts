@@ -6,7 +6,9 @@ import { agentTrade } from '../actions/trade.js';
 import { agentDecorate } from '../actions/decorate.js';
 import { agentBuy } from '../actions/buy.js';
 import { agentCreateRoom } from '../actions/create-room.js';
-import { getCachedFriends, getCachedEnemies, getCachedInventoryCount } from '../world/state-cache.js';
+import { executeDrama } from '../actions/drama.js';
+import { hostParty } from '../actions/host-party.js';
+import { getCachedFriends, getCachedEnemies, getCachedInventoryCount, getCachedRelationship } from '../world/state-cache.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
 import type { Agent, WorldState, ActionScore } from '../types.js';
 
@@ -54,6 +56,12 @@ export async function runDecisionEngine(agent: Agent, world: WorldState): Promis
     case 'create_room':
       await agentCreateRoom(agent, world);
       break;
+    case 'drama':
+      await executeDrama(agent, world);
+      break;
+    case 'host_party':
+      await hostParty(agent, world);
+      break;
   }
 }
 
@@ -75,13 +83,26 @@ function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
     + goalBonus(agent, 'explore');
   scores.push({ action: 'move', score: moveScore });
 
-  // CHAT: sociability * room_population + recent_conversation
+  // CHAT: sociability * room_population + recent_conversation + conversation chain boost + party boost
   if (isInRoom && roommates.length > 0) {
     const recentChat = (world.roomChatHistory.get(agent.currentRoomId!) || []).length;
-    const chatScore = agent.personality.sociability * 0.6
+    let chatScore = agent.personality.sociability * 0.6
       + Math.min(roommates.length / 10, 0.3)
       + (recentChat > 0 ? 0.2 : 0)
       + goalBonus(agent, 'socialize');
+
+    // Conversation chain boost: if there's an active convo the agent can reply to
+    const convo = world.activeConversations.get(agent.currentRoomId!);
+    if (convo && convo.lastSpeakerId !== agent.id && convo.participants.has(agent.id)) {
+      chatScore += CONFIG.CONVERSATION_CHAT_SCORE_BOOST;
+    }
+
+    // Party chat boost: chatting more at parties
+    const partyHere = world.activeParties.find(p => p.roomId === agent.currentRoomId);
+    if (partyHere) {
+      chatScore += CONFIG.PARTY_CHAT_SCORE_BONUS;
+    }
+
     scores.push({ action: 'chat', score: chatScore });
   }
 
@@ -131,6 +152,43 @@ function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
       + (ownedRoomCount === 0 ? 0.3 : 0)
       + goalBonus(agent, 'decorate');
     scores.push({ action: 'create_room', score: createScore });
+  }
+
+  // DRAMA: rivals or close friends in room trigger drama
+  if (isInRoom && roommates.length > 0) {
+    let dramaScore = 0;
+    for (const mate of roommates) {
+      const rel = getCachedRelationship(agent.id, mate.id);
+      if (!rel) continue;
+      if (rel.score <= CONFIG.DRAMA_ARGUMENT_THRESHOLD) {
+        dramaScore = Math.max(dramaScore, 0.7 + (1 - agent.personality.friendliness) * 0.2);
+      }
+      if (rel.score >= CONFIG.DRAMA_REUNION_THRESHOLD) {
+        dramaScore = Math.max(dramaScore, 0.6 + agent.personality.friendliness * 0.2);
+      }
+      if (rel.score >= CONFIG.DRAMA_GIFT_THRESHOLD && agent.personality.friendliness > 0.6) {
+        dramaScore = Math.max(dramaScore, 0.5);
+      }
+    }
+    if (dramaScore > 0) {
+      scores.push({ action: 'drama', score: dramaScore });
+    }
+  }
+
+  // HOST_PARTY: sociable+wealthy agents host parties (own room or home room)
+  if (isInRoom && agent.credits >= CONFIG.PARTY_COST) {
+    const isOwnRoom = currentRoom!.ownerId === agent.userId;
+    const isHomeRoom = agent.preferences.homeRoomId === agent.currentRoomId;
+    if (isOwnRoom || isHomeRoom) {
+      const alreadyParty = world.activeParties.some(p => p.roomId === agent.currentRoomId);
+      const tooManyParties = world.activeParties.length >= CONFIG.PARTY_MAX_ACTIVE;
+      if (!alreadyParty && !tooManyParties) {
+        const partyScore = agent.personality.sociability * 0.5
+          + (agent.credits > 1000 ? 0.2 : 0)
+          + (roommates.length > 3 ? 0.1 : 0);
+        scores.push({ action: 'host_party', score: partyScore });
+      }
+    }
   }
 
   // IDLE: default fallback

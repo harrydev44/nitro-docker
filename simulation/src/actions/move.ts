@@ -1,8 +1,10 @@
 import { CONFIG } from '../config.js';
 import { getCachedFriends, getCachedEnemies, getCachedCloseFriends } from '../world/state-cache.js';
 import { queueBotMove, queueBotChat } from '../world/batch-writer.js';
+import { rconBotDance } from '../emulator/rcon.js';
 import { getRandomFreeTile } from '../world/room-models.js';
 import { getHomeRoomEnterChat, getHomeRoomWelcomeChat } from '../chat/announcements.js';
+import { getPartyArrival } from '../chat/party-templates.js';
 import type { Agent, WorldState, SimRoom, ChatMessage } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
@@ -50,6 +52,17 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
         if (!world.roomChatHistory.has(targetRoom.id)) world.roomChatHistory.set(targetRoom.id, []);
         world.roomChatHistory.get(targetRoom.id)!.push(chatMsg);
       }
+    }
+  }
+
+  // Party arrival: if entering a party room, add as attendee, dance, maybe chat
+  const party = world.activeParties.find(p => p.roomId === targetRoom.id);
+  if (party) {
+    party.attendees.add(agent.id);
+    const danceId = Math.floor(Math.random() * 4) + 1;
+    rconBotDance(agent.id, danceId).catch(() => {});
+    if (Math.random() < 0.5) {
+      queueBotChat(agent.id, getPartyArrival(), CONFIG.MIN_CHAT_DELAY);
     }
   }
 }
@@ -123,6 +136,15 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
     // Home room bonus
     if (agent.preferences.homeRoomId === room.id) {
       score += CONFIG.HOME_ROOM_SCORE_BONUS;
+    }
+
+    // Party room bonus: flock to active parties (unless host is a rival)
+    const partyInRoom = world.activeParties.find(p => p.roomId === room.id);
+    if (partyInRoom) {
+      const isRivalOfHost = enemies.includes(partyInRoom.hostAgentId);
+      if (!isRivalOfHost) {
+        score += CONFIG.PARTY_MOVE_SCORE_BONUS;
+      }
     }
 
     score += Math.random() * 0.1;

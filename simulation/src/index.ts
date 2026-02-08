@@ -10,6 +10,7 @@ import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
 import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import { loadItemCatalog } from './world/item-catalog.js';
+import { rconBotDance } from './emulator/rcon.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -123,6 +124,40 @@ async function tick(world: WorldState): Promise<void> {
       world.roomChatHistory.set(roomId, messages.slice(-CONFIG.CHAT_HISTORY_LENGTH));
     }
   }
+
+  // Clean up expired conversations
+  for (const [roomId, convo] of world.activeConversations) {
+    if (
+      currentTick - convo.lastTick > CONFIG.CONVERSATION_TIMEOUT_TICKS ||
+      convo.exchangeCount >= CONFIG.CONVERSATION_MAX_EXCHANGES
+    ) {
+      world.activeConversations.delete(roomId);
+    }
+  }
+
+  // Party dance pulse — re-send dance commands every 5 ticks for active parties
+  // This ensures bots dance even when spectators enter the room after party started
+  if (currentTick % 5 === 0) {
+    for (const party of world.activeParties) {
+      const botsInRoom = world.agents.filter(a => a.currentRoomId === party.roomId);
+      for (const bot of botsInRoom) {
+        const danceId = (bot.id % 4) + 1; // deterministic per bot so it doesn't flicker
+        rconBotDance(bot.id, danceId).catch(() => {});
+        party.attendees.add(bot.id);
+      }
+    }
+  }
+
+  // Clean up expired parties — stop dancing for bots still in the room
+  const expiredParties = world.activeParties.filter(p => currentTick >= p.endTick);
+  for (const party of expiredParties) {
+    const botsInRoom = world.agents.filter(a => a.currentRoomId === party.roomId);
+    for (const bot of botsInRoom) {
+      rconBotDance(bot.id, 0).catch(() => {});
+    }
+    console.log(`[PARTY] Party at room ${party.roomId} ended (${party.attendees.size} attended, hosted by ${party.hostName})`);
+  }
+  world.activeParties = world.activeParties.filter(p => currentTick < p.endTick);
 }
 
 async function main(): Promise<void> {
@@ -147,6 +182,8 @@ async function main(): Promise<void> {
     agents: getAgents(),
     tick: 0,
     roomChatHistory: new Map(),
+    activeConversations: new Map(),
+    activeParties: [],
   };
 
   console.log(`[INIT] Loaded ${world.agents.length} agents, ${world.rooms.length} rooms`);

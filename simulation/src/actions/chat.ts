@@ -24,70 +24,92 @@ export async function agentChat(agent: Agent, world: WorldState): Promise<void> 
   let message: string;
   let isAnnouncement = false;
 
-  // 1. Check if last message was an announcement by a different agent — react to it
-  const lastMsg = history.length > 0 ? history[history.length - 1] : null;
-  if (lastMsg && lastMsg.isAnnouncement && lastMsg.agentId !== agent.id && Math.random() < CONFIG.REACTION_PROBABILITY) {
-    const rel = getCachedRelationship(agent.id, lastMsg.agentId);
-    const score = rel ? rel.score : 0;
-    const reaction = getReaction(agent, lastMsg.agentName, score);
+  // 0. Check for active conversation in this room — reply to it (AI priority)
+  const convo = world.activeConversations.get(agent.currentRoomId!);
+  if (convo && convo.lastSpeakerId !== agent.id && convo.participants.has(agent.id)) {
+    const aiReply = await generateAIChat(agent, roommates, room, history, world.tick, {
+      lastSpeakerName: convo.lastSpeakerName,
+      lastMessage: convo.lastMessage,
+    });
+    if (aiReply) {
+      message = aiReply;
+      // Update conversation state
+      convo.lastSpeakerId = agent.id;
+      convo.lastSpeakerName = agent.name;
+      convo.lastMessage = message;
+      convo.lastTick = world.tick;
+      convo.exchangeCount++;
 
-    if (reaction) {
-      message = reaction.message;
+      queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);
+      trackChat(agent, world, room, roommates, message, false);
+      return;
+    }
+    // AI unavailable — fall through to normal chat
+  }
 
-      // Adjust relationship based on reaction type
-      if (reaction.relationshipDelta !== 0) {
-        queueRelationshipChange(agent.id, lastMsg.agentId, reaction.relationshipDelta);
-      }
-    } else {
-      message = getRoomChat(agent, room.purpose);
-    }
+  // 1. ALWAYS try AI first — this is the primary chat path
+  const aiMessage = await generateAIChat(agent, roommates, room, history, world.tick);
+  if (aiMessage) {
+    message = aiMessage;
   }
-  // 2. Chance to share gossip from memory
-  else if (Math.random() < CONFIG.MEMORY_GOSSIP_PROBABILITY && roommates.length > 0) {
-    const cachedMems = getCachedMemories();
-    const gossipMsg = getMemoryGossip(agent, roommates, cachedMems);
-    if (gossipMsg) {
-      message = gossipMsg;
-    } else {
-      message = getRoomChat(agent, room.purpose);
-    }
-  }
-  // 3. Chance to share an opinion (personality-driven take)
-  else if (Math.random() < 0.1) {
+  // 2. Template fallbacks only when AI is on cooldown or unavailable
+  else if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
+    const target = roommates[Math.floor(Math.random() * roommates.length)];
+    message = getGreeting(agent, target);
+  } else if (Math.random() < 0.05) {
     message = getOpinion(agent);
     isAnnouncement = true;
-  }
-  // 4. Normal chat flow — try AI first, fall back to templates
-  else {
-    const aiMessage = await generateAIChat(agent, roommates, room, history, world.tick);
-    if (aiMessage) {
-      message = aiMessage;
-    } else if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
-      const target = roommates[Math.floor(Math.random() * roommates.length)];
-      message = getGreeting(agent, target);
-    } else if (Math.random() < CONFIG.REPLY_PROBABILITY && history.length > 0) {
-      const recentMsg = history[history.length - 1];
-      const lastSpeaker = world.agents.find(a => a.id === recentMsg.agentId);
-      if (lastSpeaker && lastSpeaker.id !== agent.id) {
-        message = getReply(agent, lastSpeaker, recentMsg.message);
-      } else {
-        message = getRoomChat(agent, room.purpose);
-      }
+  } else if (Math.random() < 0.08 && roommates.length > 0) {
+    const cachedMems = getCachedMemories();
+    const gossipMsg = getMemoryGossip(agent, roommates, cachedMems);
+    message = gossipMsg || getRoomChat(agent, room.purpose);
+  } else if (Math.random() < CONFIG.REPLY_PROBABILITY && history.length > 0) {
+    const recentMsg = history[history.length - 1];
+    const lastSpeaker = world.agents.find(a => a.id === recentMsg.agentId);
+    if (lastSpeaker && lastSpeaker.id !== agent.id) {
+      message = getReply(agent, lastSpeaker, recentMsg.message);
     } else {
-      message = Math.random() < 0.6 ? getRoomChat(agent, room.purpose) : getIdleChat(agent);
+      message = getRoomChat(agent, room.purpose);
     }
+  } else {
+    message = Math.random() < 0.6 ? getRoomChat(agent, room.purpose) : getIdleChat(agent);
   }
 
   queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);
 
-  // Track in room chat history
-  const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message, tick: world.tick, isAnnouncement };
-  if (!world.roomChatHistory.has(agent.currentRoomId)) {
-    world.roomChatHistory.set(agent.currentRoomId, []);
+  // Maybe start a new conversation chain
+  if (!isAnnouncement && roommates.length > 0 && !world.activeConversations.has(agent.currentRoomId!)) {
+    if (Math.random() < CONFIG.CONVERSATION_START_PROBABILITY) {
+      const responder = roommates[Math.floor(Math.random() * roommates.length)];
+      world.activeConversations.set(agent.currentRoomId!, {
+        roomId: agent.currentRoomId!,
+        participants: new Set([agent.id, responder.id]),
+        lastTick: world.tick,
+        exchangeCount: 1,
+        lastMessage: message,
+        lastSpeakerId: agent.id,
+        lastSpeakerName: agent.name,
+      });
+    }
   }
-  world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
 
-  // Positive interaction with nearby roommates
+  trackChat(agent, world, room, roommates, message, isAnnouncement);
+}
+
+function trackChat(
+  agent: Agent,
+  world: WorldState,
+  room: { id: number; name: string },
+  roommates: Agent[],
+  message: string,
+  isAnnouncement: boolean,
+): void {
+  const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message, tick: world.tick, isAnnouncement };
+  if (!world.roomChatHistory.has(room.id)) {
+    world.roomChatHistory.set(room.id, []);
+  }
+  world.roomChatHistory.get(room.id)!.push(chatMsg);
+
   for (const mate of roommates.slice(0, 3)) {
     queueRelationshipChange(agent.id, mate.id, CONFIG.RELATIONSHIP_CHAT_POSITIVE);
   }

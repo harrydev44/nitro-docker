@@ -13,12 +13,13 @@ interface OpenRouterResponse {
 let activeRequests = 0;
 const agentLastCallTick = new Map<number, number>();
 
-export function canCallAI(agentId: number, currentTick: number): boolean {
+export function canCallAI(agentId: number, currentTick: number, cooldownOverride?: number): boolean {
   if (!CONFIG.AI_ENABLED) return false;
   if (activeRequests >= CONFIG.AI_MAX_CONCURRENT) return false;
 
+  const cooldown = cooldownOverride ?? CONFIG.AI_COOLDOWN_TICKS;
   const lastTick = agentLastCallTick.get(agentId);
-  if (lastTick !== undefined && currentTick - lastTick < CONFIG.AI_COOLDOWN_TICKS) return false;
+  if (lastTick !== undefined && currentTick - lastTick < cooldown) return false;
 
   return true;
 }

@@ -89,7 +89,7 @@ async function collectStats(world: WorldState) {
      FROM simulation_agent_memory m
      JOIN bots b ON m.agent_id = b.id
      LEFT JOIN bots b2 ON m.target_agent_id = b2.id
-     WHERE m.event_type IN ('trade', 'gift', 'conflict')
+     WHERE m.event_type IN ('trade', 'gift', 'conflict', 'reunion', 'argument')
      ORDER BY m.created_at DESC
      LIMIT 20`
   );
@@ -142,6 +142,20 @@ async function collectStats(world: WorldState) {
      LIMIT 20`
   );
 
+  // Active parties
+  const activeParties = world.activeParties.map(p => {
+    const room = world.rooms.find(r => r.id === p.roomId);
+    const hostAgent = world.agents.find(a => a.id === p.hostAgentId);
+    return {
+      roomId: p.roomId,
+      roomName: room?.name || 'Unknown',
+      hostName: p.hostName,
+      attendees: p.attendees.size,
+      ticksRemaining: p.endTick - world.tick,
+      hostMoltbookUrl: hostAgent?.moltbookUrl,
+    };
+  });
+
   return {
     tick: world.tick,
     totalAgents: world.agents.length,
@@ -149,6 +163,7 @@ async function collectStats(world: WorldState) {
     totalRooms: world.rooms.length,
     activeRooms: roomStats.length,
     roomStats,
+    activeParties,
     richestAgents: richest.map(a => ({
       ...a,
       moltbookUrl: moltbookUrlMap.get(a.name),
