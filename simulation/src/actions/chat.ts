@@ -6,6 +6,7 @@ import { getReaction } from '../chat/reactions.js';
 import { getOpinion } from '../chat/announcements.js';
 import { getMemoryGossip } from '../chat/gossip.js';
 import { getCachedMemories } from '../world/state-cache.js';
+import { generateAIChat } from '../ai/chat-generator.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 export async function agentChat(agent: Agent, world: WorldState): Promise<void> {
@@ -56,20 +57,25 @@ export async function agentChat(agent: Agent, world: WorldState): Promise<void> 
     message = getOpinion(agent);
     isAnnouncement = true;
   }
-  // 4. Normal chat flow (greetings, replies, room chat, idle)
-  else if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
-    const target = roommates[Math.floor(Math.random() * roommates.length)];
-    message = getGreeting(agent, target);
-  } else if (Math.random() < CONFIG.REPLY_PROBABILITY && history.length > 0) {
-    const recentMsg = history[history.length - 1];
-    const lastSpeaker = world.agents.find(a => a.id === recentMsg.agentId);
-    if (lastSpeaker && lastSpeaker.id !== agent.id) {
-      message = getReply(agent, lastSpeaker, recentMsg.message);
+  // 4. Normal chat flow — try AI first, fall back to templates
+  else {
+    const aiMessage = await generateAIChat(agent, roommates, room, history, world.tick);
+    if (aiMessage) {
+      message = aiMessage;
+    } else if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
+      const target = roommates[Math.floor(Math.random() * roommates.length)];
+      message = getGreeting(agent, target);
+    } else if (Math.random() < CONFIG.REPLY_PROBABILITY && history.length > 0) {
+      const recentMsg = history[history.length - 1];
+      const lastSpeaker = world.agents.find(a => a.id === recentMsg.agentId);
+      if (lastSpeaker && lastSpeaker.id !== agent.id) {
+        message = getReply(agent, lastSpeaker, recentMsg.message);
+      } else {
+        message = getRoomChat(agent, room.purpose);
+      }
     } else {
-      message = getRoomChat(agent, room.purpose);
+      message = Math.random() < 0.6 ? getRoomChat(agent, room.purpose) : getIdleChat(agent);
     }
-  } else {
-    message = Math.random() < 0.6 ? getRoomChat(agent, room.purpose) : getIdleChat(agent);
   }
 
   queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);

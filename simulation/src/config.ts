@@ -6,7 +6,7 @@ export const CONFIG = {
   AGENT_COUNT: 200,
   OWNER_COUNT: 8,                // 8 owner users, 25 bots each
   BOTS_PER_OWNER: 25,
-  AGENT_IDLE_PROBABILITY: 0.3,   // 30% chance agent does nothing per tick
+  AGENTS_PER_TICK: 5,            // only N agents act per tick (rotating batch)
   MAX_GOALS_PER_AGENT: 3,
   GOAL_GENERATION_MIN_TICKS: 50,
   GOAL_GENERATION_MAX_TICKS: 100,
@@ -69,6 +69,15 @@ export const CONFIG = {
   HOME_ROOM_VISIT_THRESHOLD: 5,        // visits to establish home room
   HOME_ROOM_SCORE_BONUS: 0.4,          // move scoring bonus for home room
   CLOSE_FRIEND_FOLLOW_BONUS: 0.3,      // bonus when close friend just moved there
+
+  // AI chat settings (OpenRouter)
+  AI_ENABLED: !!process.env.OPENROUTER_API_KEY,
+  AI_MODEL: 'anthropic/claude-3.5-haiku',
+  AI_MAX_TOKENS: 40,
+  AI_TEMPERATURE: 0.9,
+  AI_TIMEOUT_MS: 5000,
+  AI_COOLDOWN_TICKS: 10,
+  AI_MAX_CONCURRENT: 3,
 
   // Stats HTTP server
   STATS_PORT: 3333,

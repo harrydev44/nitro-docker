@@ -67,14 +67,12 @@ async function tick(world: WorldState): Promise<void> {
   world.agents = getAgents();
   world.rooms = getRooms();
 
-  // Shuffle agents for fairness
+  // Shuffle agents and pick a small batch per tick (staggered processing)
   const shuffled = [...world.agents].sort(() => Math.random() - 0.5);
+  const batch = shuffled.slice(0, CONFIG.AGENTS_PER_TICK);
 
-  // 2. Run decisions for each agent (queues writes, no direct DB per agent)
-  for (const agent of shuffled) {
-    // Skip with probability — not all agents act every tick
-    if (Math.random() < CONFIG.AGENT_IDLE_PROBABILITY) continue;
-
+  // 2. Run decisions for batch of agents (queues writes, no direct DB per agent)
+  for (const agent of batch) {
     agent.ticksInCurrentRoom++;
 
     try {
@@ -129,7 +127,12 @@ async function tick(world: WorldState): Promise<void> {
 
 async function main(): Promise<void> {
   console.log('=== Habbo AI Civilization ===');
-  console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms`);
+  console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms, agents/tick: ${CONFIG.AGENTS_PER_TICK}`);
+  if (CONFIG.AI_ENABLED) {
+    console.log(`[AI] OpenRouter enabled (${CONFIG.AI_MODEL})`);
+  } else {
+    console.log('[AI] OpenRouter disabled (no OPENROUTER_API_KEY)');
+  }
 
   await ensureSimulationTables();
   await loadRoomModels();

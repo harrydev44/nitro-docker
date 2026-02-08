@@ -1,4 +1,5 @@
 import { getPool } from '../db.js';
+import { rconBotTalk } from '../emulator/rcon.js';
 
 // Accumulated writes per tick, flushed in bulk at tick end
 
@@ -48,6 +49,9 @@ let relationshipUpdates: Map<string, number> = new Map(); // "a:b" -> total delt
 let memoryInserts: MemoryInsert[] = [];
 let agentStateUpdates: Map<number, AgentStateUpdate> = new Map();
 
+// RCON chat queue — sent directly to emulator, no DB roundtrip
+const pendingRconChats: { botId: number; message: string }[] = [];
+
 // --- Buffer methods (called during tick, no DB) ---
 
 export function queueBotMove(botId: number, roomId: number, x: number, y: number): void {
@@ -59,11 +63,9 @@ export function queueBotMove(botId: number, roomId: number, x: number, y: number
   botUpdates.set(botId, existing);
 }
 
-export function queueBotChat(botId: number, chatLine: string, delay: number): void {
-  const existing = botUpdates.get(botId) || { id: botId };
-  existing.chatLines = chatLine;
-  existing.chatDelay = delay;
-  botUpdates.set(botId, existing);
+export function queueBotChat(botId: number, chatLine: string, _delay: number): void {
+  // Send via RCON for one-shot delivery (no emulator auto-repeat)
+  pendingRconChats.push({ botId, message: chatLine });
 }
 
 export function queueCreditChange(userId: number, delta: number): void {
@@ -103,7 +105,7 @@ export async function flushAll(): Promise<void> {
           params.push(bot.roomId, bot.x || 0, bot.y || 0);
         }
         if (bot.chatLines !== undefined) {
-          sets.push("chat_lines = ?", "chat_auto = '1'", "chat_random = '1'");
+          sets.push("chat_lines = ?", "chat_auto = '0'", "chat_random = '0'");
           params.push(bot.chatLines);
         }
         if (bot.chatDelay !== undefined) {
@@ -183,5 +185,11 @@ export async function flushAll(): Promise<void> {
     relationshipUpdates.clear();
     memoryInserts = [];
     agentStateUpdates.clear();
+
+    // Send queued RCON chats (fire-and-forget, after DB transaction)
+    const chats = pendingRconChats.splice(0);
+    for (const chat of chats) {
+      rconBotTalk(chat.botId, chat.message).catch(() => {});
+    }
   }
 }
