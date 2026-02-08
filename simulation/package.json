@@ -1,0 +1,24 @@
+{
+  "name": "habbo-simulation",
+  "version": "1.0.0",
+  "description": "Habbo AI Civilization — 200 autonomous agents simulation engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "generate-agents": "tsx src/scripts/generate.ts",
+    "setup-world": "tsx src/scripts/setup-world.ts",
+    "reset": "tsx src/scripts/reset.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.9.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

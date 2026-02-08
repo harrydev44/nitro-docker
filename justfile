@@ -91,3 +91,37 @@ start-ai:
 # Start AI service in dev mode (auto-restart on changes)
 dev-ai:
   cd ai-service && npm run dev
+
+# --- Simulation Engine ---
+
+# Install simulation dependencies
+sim-install:
+  cd simulation && npm install
+
+# Generate 200 AI agents in the database
+sim-generate:
+  cd simulation && npm run generate-agents
+
+# Create 25 themed rooms for the simulation
+sim-setup-world:
+  cd simulation && npm run setup-world
+
+# Start the simulation engine (dev mode with hot reload)
+sim-start:
+  cd simulation && npm run dev
+
+# Build the simulation engine
+sim-build:
+  cd simulation && npm run build
+
+# Start the built simulation engine
+sim-start-prod:
+  cd simulation && npm start
+
+# Reset all simulation data (agents, rooms, stats)
+sim-reset:
+  cd simulation && npm run reset
+
+# Full simulation setup: install, generate agents, setup world
+sim-init:
+  cd simulation && npm install && npm run generate-agents && npm run setup-world
