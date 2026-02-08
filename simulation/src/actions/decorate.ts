@@ -1,5 +1,7 @@
-import { execute, query } from '../db.js';
+import { execute } from '../db.js';
 import { CONFIG } from '../config.js';
+import { getCachedRoomItemCount } from '../world/state-cache.js';
+import { queueBotChat, queueCreditChange } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import type { Agent, WorldState } from '../types.js';
 
@@ -24,12 +26,8 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
 
   const room = ownedRooms[Math.floor(Math.random() * ownedRooms.length)];
 
-  // Count items already in the room
-  const itemCountResult = await query<{ cnt: number }>(
-    `SELECT COUNT(*) as cnt FROM items WHERE room_id = ?`,
-    [room.id]
-  );
-  const itemCount = itemCountResult[0]?.cnt || 0;
+  // Use cached item count instead of DB query
+  const itemCount = getCachedRoomItemCount(room.id);
 
   // Don't over-furnish
   if (itemCount >= 30) {
@@ -43,14 +41,11 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
 
   const item = affordableItems[Math.floor(Math.random() * affordableItems.length)];
 
-  // Deduct credits
-  await execute(
-    `UPDATE users SET credits = credits - ? WHERE id = ?`,
-    [item.cost, agent.userId]
-  );
+  // Batch: deduct credits
+  queueCreditChange(agent.userId, -item.cost);
   agent.credits -= item.cost;
 
-  // Place item in room at random position
+  // Place item in room at random position (direct DB — needs INSERT)
   const x = Math.floor(Math.random() * 8) + 1;
   const y = Math.floor(Math.random() * 8) + 1;
 
@@ -60,13 +55,9 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
     [agent.userId, room.id, item.itemId, x, y]
   );
 
-  // Chat about decorating
+  // Batch: chat about decorating
   if (Math.random() < 0.3) {
-    const decorMsg = `Just added a new ${item.name} to my room!`;
-    await execute(
-      `UPDATE bots SET chat_lines = ?, chat_auto = '1', chat_delay = ? WHERE id = ?`,
-      [decorMsg, CONFIG.MIN_CHAT_DELAY, agent.id]
-    );
+    queueBotChat(agent.id, `Just added a new ${item.name} to my room!`, CONFIG.MIN_CHAT_DELAY);
   }
 
   agent.state = 'decorating';

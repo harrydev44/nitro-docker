@@ -1,5 +1,6 @@
 import { execute, query } from '../db.js';
 import { CONFIG } from '../config.js';
+import { queueBotChat, queueCreditChange } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import type { Agent, WorldState, RoomPurpose } from '../types.js';
 
@@ -54,7 +55,7 @@ export async function agentCreateRoom(agent: Agent, world: WorldState): Promise<
   );
   const ownerName = ownerRows[0]?.username || 'sim_owner';
 
-  // Create room
+  // Create room (direct DB — needs insertId)
   const tradeMode = chosenPurpose === 'trade' ? 2 : 0;
   const result = await execute(
     `INSERT INTO rooms (owner_id, owner_name, name, description, model, state, users_max, trade_mode, category)
@@ -62,27 +63,20 @@ export async function agentCreateRoom(agent: Agent, world: WorldState): Promise<
     [agent.userId, ownerName, roomName, `A ${chosenPurpose} room created by ${agent.name}`, model, tradeMode]
   );
 
-  // Register in simulation stats
+  // Register in simulation stats (direct DB — needs insertId from above)
   await execute(
     `INSERT INTO simulation_room_stats (room_id, purpose) VALUES (?, ?)`,
     [result.insertId, chosenPurpose]
   );
 
-  // Deduct cost
-  await execute(
-    `UPDATE users SET credits = credits - ? WHERE id = ?`,
-    [CONFIG.ROOM_CREATION_COST, agent.userId]
-  );
+  // Batch: deduct cost
+  queueCreditChange(agent.userId, -CONFIG.ROOM_CREATION_COST);
   agent.credits -= CONFIG.ROOM_CREATION_COST;
 
   completeGoal(agent, 'decorate');
 
-  // Chat about new room
-  const chatMsg = `Just created my new ${chosenPurpose} room: ${roomName}!`;
-  await execute(
-    `UPDATE bots SET chat_lines = ?, chat_auto = '1', chat_delay = ? WHERE id = ?`,
-    [chatMsg, CONFIG.MIN_CHAT_DELAY, agent.id]
-  );
+  // Batch: chat about new room
+  queueBotChat(agent.id, `Just created my new ${chosenPurpose} room: ${roomName}!`, CONFIG.MIN_CHAT_DELAY);
 
   console.log(`[ROOM] Agent ${agent.name} created room "${roomName}" (${chosenPurpose})`);
 }

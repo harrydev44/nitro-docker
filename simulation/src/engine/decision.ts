@@ -5,9 +5,9 @@ import { agentWork } from '../actions/work.js';
 import { agentTrade } from '../actions/trade.js';
 import { agentDecorate } from '../actions/decorate.js';
 import { agentCreateRoom } from '../actions/create-room.js';
-import { getFriends, getEnemies } from '../agents/relationships.js';
+import { getCachedFriends, getCachedEnemies } from '../world/state-cache.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
-import type { Agent, WorldState, ActionType, ActionScore } from '../types.js';
+import type { Agent, WorldState, ActionScore } from '../types.js';
 
 export async function runDecisionEngine(agent: Agent, world: WorldState): Promise<void> {
   // Prune expired goals and potentially generate new ones
@@ -16,8 +16,8 @@ export async function runDecisionEngine(agent: Agent, world: WorldState): Promis
     generateGoals(agent, world);
   }
 
-  // Score each possible action
-  const scores = await scoreActions(agent, world);
+  // Score each possible action (no DB calls — uses cached data)
+  const scores = scoreActions(agent, world);
 
   // Add personality noise (impulsiveness)
   for (const s of scores) {
@@ -53,10 +53,10 @@ export async function runDecisionEngine(agent: Agent, world: WorldState): Promis
   }
 }
 
-async function scoreActions(agent: Agent, world: WorldState): Promise<ActionScore[]> {
+function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
   const scores: ActionScore[] = [];
-  const friends = await getFriends(agent.id);
-  const enemies = await getEnemies(agent.id);
+  const friends = getCachedFriends(agent.id);
+  const enemies = getCachedEnemies(agent.id);
 
   const currentRoom = world.rooms.find(r => r.id === agent.currentRoomId);
   const isInRoom = !!currentRoom;

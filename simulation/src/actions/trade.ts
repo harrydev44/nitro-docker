@@ -1,7 +1,7 @@
 import { execute, query } from '../db.js';
 import { CONFIG } from '../config.js';
-import { getRelationship, adjustRelationship } from '../agents/relationships.js';
-import { addMemory } from '../agents/memory.js';
+import { getCachedRelationship } from '../world/state-cache.js';
+import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import type { Agent, WorldState } from '../types.js';
 
@@ -19,11 +19,11 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
   );
   if (roommates.length === 0) return;
 
-  // Pick a trade partner (prefer friends)
-  const partner = await pickTradePartner(agent, roommates);
+  // Pick a trade partner (prefer friends) — uses cached relationships
+  const partner = pickTradePartner(agent, roommates);
   if (!partner) return;
 
-  // Get items owned by each agent
+  // Get items owned by each agent (need actual item IDs, must query DB)
   const agentItems = await query<ItemRow>(
     `SELECT id, item_id, user_id FROM items WHERE user_id = ? AND room_id = 0 LIMIT 10`,
     [agent.userId]
@@ -33,14 +33,11 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
     [partner.userId]
   );
 
-  // Simple credit trade if no items
-  if (agentItems.length === 0 && partnerItems.length === 0) {
-    // Skip trade - nothing to trade
-    return;
-  }
+  // Skip trade if nothing to trade
+  if (agentItems.length === 0 && partnerItems.length === 0) return;
 
   // Determine trade: agent offers an item, wants credits or vice versa
-  const relationship = await getRelationship(agent.id, partner.id);
+  const relationship = getCachedRelationship(agent.id, partner.id);
   const trustBonus = relationship ? Math.max(0, relationship.score / 100) * 0.2 : 0;
 
   // Acceptance probability
@@ -53,16 +50,10 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
     const price = 50 + Math.floor(Math.random() * 200);
 
     if (partner.credits >= price) {
-      // Transfer item
+      // Transfer item (direct DB — needs atomicity)
       await execute(`UPDATE items SET user_id = ? WHERE id = ?`, [partner.userId, offeredItem.id]);
 
-      // Transfer credits
-      await execute(`UPDATE users SET credits = credits + ? WHERE id = ?`, [price, agent.userId]);
-      await execute(`UPDATE users SET credits = credits - ? WHERE id = ?`, [price, partner.userId]);
-      agent.credits += price;
-      partner.credits -= price;
-
-      // Update market price
+      // Update market price (direct DB — needs insertId/upsert)
       await execute(
         `INSERT INTO simulation_market_prices (item_base_id, avg_price, last_trade_price, trade_count)
          VALUES (?, ?, ?, 1)
@@ -73,37 +64,45 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
         [offeredItem.item_id, price, price, price, price]
       );
 
-      // Relationships
-      await adjustRelationship(agent.id, partner.id, CONFIG.RELATIONSHIP_TRADE_COMPLETE);
-      await adjustRelationship(partner.id, agent.id, CONFIG.RELATIONSHIP_TRADE_COMPLETE);
+      // Batch: credit changes
+      queueCreditChange(agent.userId, price);
+      queueCreditChange(partner.userId, -price);
+      agent.credits += price;
+      partner.credits -= price;
 
-      // Memory
-      await addMemory(agent.id, partner.id, 'trade', 0.5, `Sold item to ${partner.name} for ${price}cr`, agent.currentRoomId);
-      await addMemory(partner.id, agent.id, 'trade', 0.5, `Bought item from ${agent.name} for ${price}cr`, agent.currentRoomId);
+      // Batch: relationships
+      queueRelationshipChange(agent.id, partner.id, CONFIG.RELATIONSHIP_TRADE_COMPLETE);
+      queueRelationshipChange(partner.id, agent.id, CONFIG.RELATIONSHIP_TRADE_COMPLETE);
+
+      // Batch: memory
+      queueMemory({
+        agentId: agent.id, targetAgentId: partner.id,
+        eventType: 'trade', sentiment: 0.5,
+        summary: `Sold item to ${partner.name} for ${price}cr`, roomId: agent.currentRoomId,
+      });
+      queueMemory({
+        agentId: partner.id, targetAgentId: agent.id,
+        eventType: 'trade', sentiment: 0.5,
+        summary: `Bought item from ${agent.name} for ${price}cr`, roomId: agent.currentRoomId,
+      });
 
       completeGoal(agent, 'trade');
 
-      // Trade chat
-      const room = world.rooms.find(r => r.id === agent.currentRoomId);
-      const tradeMsg = `Thanks for the trade ${partner.name}!`;
-      await execute(
-        `UPDATE bots SET chat_lines = ?, chat_auto = '1', chat_delay = ? WHERE id = ?`,
-        [tradeMsg, CONFIG.MIN_CHAT_DELAY, agent.id]
-      );
+      // Batch: trade chat
+      queueBotChat(agent.id, `Thanks for the trade ${partner.name}!`, CONFIG.MIN_CHAT_DELAY);
     }
   }
 
   agent.state = 'trading';
 }
 
-async function pickTradePartner(agent: Agent, candidates: Agent[]): Promise<Agent | null> {
-  // Score candidates: friends preferred
-  const scored = [];
-  for (const candidate of candidates) {
-    const rel = await getRelationship(agent.id, candidate.id);
+function pickTradePartner(agent: Agent, candidates: Agent[]): Agent | null {
+  // Score candidates using cached relationships
+  const scored = candidates.map(candidate => {
+    const rel = getCachedRelationship(agent.id, candidate.id);
     const score = (rel ? rel.score / 100 : 0) + Math.random() * 0.5;
-    scored.push({ agent: candidate, score });
-  }
+    return { agent: candidate, score };
+  });
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.agent || null;
 }

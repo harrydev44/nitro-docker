@@ -2,8 +2,8 @@ import 'dotenv/config';
 import { CONFIG } from './config.js';
 import { closePool, execute } from './db.js';
 import { ensureSimulationTables } from './db-setup.js';
-import { loadAgents } from './agents/loader.js';
-import { loadRooms } from './world/rooms.js';
+import { refreshCache, getAgents, getRooms } from './world/state-cache.js';
+import { flushAll, queueAgentState } from './world/batch-writer.js';
 import { runDecisionEngine } from './engine/decision.js';
 import { updatePopularity } from './world/popularity.js';
 import { decayRelationships } from './agents/relationships.js';
@@ -19,27 +19,44 @@ async function tick(world: WorldState): Promise<void> {
   currentTick++;
   world.tick = currentTick;
 
-  // Reload room populations from DB
-  const rooms = await loadRooms();
-  world.rooms = rooms;
-
-  // Reload agent positions from DB
-  const agents = await loadAgents();
-  world.agents = agents;
+  // 1. Refresh all caches from DB (agents, rooms, relationships, items)
+  await refreshCache();
+  world.agents = getAgents();
+  world.rooms = getRooms();
 
   // Shuffle agents for fairness
   const shuffled = [...world.agents].sort(() => Math.random() - 0.5);
 
-  // Run decisions for each agent
+  // 2. Run decisions for each agent (queues writes, no direct DB per agent)
   for (const agent of shuffled) {
     // Skip with probability — not all agents act every tick
     if (Math.random() < CONFIG.AGENT_IDLE_PROBABILITY) continue;
+
+    agent.ticksInCurrentRoom++;
 
     try {
       await runDecisionEngine(agent, world);
     } catch (err) {
       console.error(`[TICK ${currentTick}] Error for agent ${agent.name}:`, err);
     }
+
+    // Queue agent state save for every active agent
+    queueAgentState({
+      agentId: agent.id,
+      personality: JSON.stringify(agent.personality),
+      preferences: JSON.stringify(agent.preferences),
+      goals: JSON.stringify(agent.goals),
+      state: agent.state,
+      ticksInRoom: agent.ticksInCurrentRoom,
+      ticksWorking: agent.ticksWorking,
+    });
+  }
+
+  // 3. Flush all batched writes in a single transaction
+  try {
+    await flushAll();
+  } catch (err) {
+    console.error(`[TICK ${currentTick}] Flush error:`, err);
   }
 
   // Keep spectator SSO ticket alive (emulator clears it after login)
@@ -73,10 +90,12 @@ async function main(): Promise<void> {
 
   await ensureSimulationTables();
 
-  // Load initial world state
+  // Load initial world state via cache
+  await refreshCache();
+
   const world: WorldState = {
-    rooms: await loadRooms(),
-    agents: await loadAgents(),
+    rooms: getRooms(),
+    agents: getAgents(),
     tick: 0,
     roomChatHistory: new Map(),
   };

@@ -1,7 +1,5 @@
-import { execute } from '../db.js';
 import { CONFIG, JOB_TYPES } from '../config.js';
-import { adjustRelationship } from '../agents/relationships.js';
-import { addMemory } from '../agents/memory.js';
+import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory, queueAgentState } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import type { Agent, WorldState } from '../types.js';
 
@@ -25,10 +23,7 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
 
   // Earn credits
   const pay = jobInfo.pay;
-  await execute(
-    `UPDATE users SET credits = credits + ? WHERE id = ?`,
-    [pay, agent.userId]
-  );
+  queueCreditChange(agent.userId, pay);
   agent.credits += pay;
   agent.state = 'working';
   agent.ticksWorking++;
@@ -45,10 +40,7 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
   ];
   const chatLine = workLines[Math.floor(Math.random() * workLines.length)];
   if (Math.random() < 0.3) {
-    await execute(
-      `UPDATE bots SET chat_lines = ?, chat_auto = '1', chat_delay = ? WHERE id = ?`,
-      [chatLine, CONFIG.MIN_CHAT_DELAY + 5, agent.id]
-    );
+    queueBotChat(agent.id, chatLine, CONFIG.MIN_CHAT_DELAY + 5);
   }
 
   // Build relationships with coworkers
@@ -56,7 +48,7 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
     a => a.id !== agent.id && a.currentRoomId === agent.currentRoomId && a.state === 'working'
   );
   for (const coworker of coworkers.slice(0, 2)) {
-    await adjustRelationship(agent.id, coworker.id, CONFIG.RELATIONSHIP_WORK_TOGETHER);
+    queueRelationshipChange(agent.id, coworker.id, CONFIG.RELATIONSHIP_WORK_TOGETHER);
   }
 
   // Boredom: leave after too many ticks working
@@ -68,15 +60,21 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
     completeGoal(agent, 'work');
     completeGoal(agent, 'earn');
 
-    await addMemory(agent.id, null, 'work_together', 0.2, `Worked as ${jobName} in ${room.name}`, room.id);
+    queueMemory({
+      agentId: agent.id, targetAgentId: null,
+      eventType: 'work_together', sentiment: 0.2,
+      summary: `Worked as ${jobName} in ${room.name}`, roomId: room.id,
+    });
   }
 
-  // Save state
-  await execute(
-    `INSERT INTO simulation_agent_state (agent_id, personality, preferences, goals, state, ticks_working)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE state = VALUES(state), ticks_working = VALUES(ticks_working), goals = VALUES(goals)`,
-    [agent.id, JSON.stringify(agent.personality), JSON.stringify(agent.preferences),
-     JSON.stringify(agent.goals), agent.state, agent.ticksWorking]
-  );
+  // Queue state save (flushed at tick end)
+  queueAgentState({
+    agentId: agent.id,
+    personality: JSON.stringify(agent.personality),
+    preferences: JSON.stringify(agent.preferences),
+    goals: JSON.stringify(agent.goals),
+    state: agent.state,
+    ticksInRoom: agent.ticksInCurrentRoom,
+    ticksWorking: agent.ticksWorking,
+  });
 }
