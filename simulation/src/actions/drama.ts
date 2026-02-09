@@ -1,5 +1,5 @@
 import { CONFIG } from '../config.js';
-import { queueBotChat, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
+import { queueBotChat, queueBotShout, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
 import { getCachedRelationship } from '../world/state-cache.js';
 import { generateDramaChat } from '../ai/chat-generator.js';
 import {
@@ -7,6 +7,9 @@ import {
   getReunionGreeting, getReunionResponse,
   getGiftMessage, getGiftThanks,
 } from '../chat/drama-templates.js';
+import { pickBubbleForContext } from '../chat/bubble-styles.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
+import { rconBotAction, rconBotEffect } from '../emulator/rcon.js';
 import type { Agent, WorldState } from '../types.js';
 
 // Per-agent cooldown tracking (transient, not persisted)
@@ -74,8 +77,16 @@ async function executeArgument(agent: Agent, target: Agent, world: WorldState, r
     defenseMsg = getArgumentDefense(agent.name);
   }
 
-  queueBotChat(agent.id, attackMsg, CONFIG.MIN_CHAT_DELAY);
-  queueBotChat(target.id, defenseMsg, CONFIG.MIN_CHAT_DELAY + 3);
+  // Attacker SHOUTS with angry bubble, defender talks with dark bubble
+  const attackBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('argument') : -1;
+  const defenseBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('argument') : -1;
+  queueBotShout(agent.id, attackMsg, attackBubble);
+  queueBotChat(target.id, defenseMsg, CONFIG.MIN_CHAT_DELAY + 3, defenseBubble);
+
+  // Effects: angry effect on attacker
+  if (CONFIG.EFFECT_ENABLED) {
+    rconBotEffect(agent.id, 5, 15).catch(() => {});
+  }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_ARGUMENT_RELATIONSHIP_DELTA);
   queueRelationshipChange(target.id, agent.id, CONFIG.DRAMA_ARGUMENT_RELATIONSHIP_DELTA);
@@ -117,8 +128,25 @@ async function executeReunion(agent: Agent, target: Agent, world: WorldState, ro
     responseMsg = getReunionResponse(agent.name);
   }
 
-  queueBotChat(agent.id, greetMsg, CONFIG.MIN_CHAT_DELAY);
-  queueBotChat(target.id, responseMsg, CONFIG.MIN_CHAT_DELAY + 3);
+  // Reunion uses hearts/roses bubbles
+  const greetBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('reunion') : -1;
+  const responseBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('reunion') : -1;
+  queueBotChat(agent.id, greetMsg, CONFIG.MIN_CHAT_DELAY, greetBubble);
+  queueBotChat(target.id, responseMsg, CONFIG.MIN_CHAT_DELAY + 3, responseBubble);
+
+  // Gestures: both agents wave or blow kiss
+  if (CONFIG.GESTURE_ENABLED && shouldGesture('reunion')) {
+    const g1 = pickGesture('reunion');
+    const g2 = pickGesture('reunion');
+    if (g1) rconBotAction(agent.id, g1).catch(() => {});
+    if (g2) rconBotAction(target.id, g2).catch(() => {});
+  }
+
+  // Effects: hearts on both agents
+  if (CONFIG.EFFECT_ENABLED) {
+    rconBotEffect(agent.id, 7, 20).catch(() => {});
+    rconBotEffect(target.id, 7, 20).catch(() => {});
+  }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_REUNION_RELATIONSHIP_DELTA);
   queueRelationshipChange(target.id, agent.id, CONFIG.DRAMA_REUNION_RELATIONSHIP_DELTA);
@@ -155,8 +183,28 @@ async function executeGift(agent: Agent, target: Agent, world: WorldState, roomN
 
   thanksMsg = getGiftThanks(agent.name);
 
-  queueBotChat(agent.id, giveMsg, CONFIG.MIN_CHAT_DELAY);
-  queueBotChat(target.id, thanksMsg, CONFIG.MIN_CHAT_DELAY + 3);
+  // Gift uses hearts/green bubbles
+  const giveBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('gift') : -1;
+  const thanksBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('gift') : -1;
+  queueBotChat(agent.id, giveMsg, CONFIG.MIN_CHAT_DELAY, giveBubble);
+  queueBotChat(target.id, thanksMsg, CONFIG.MIN_CHAT_DELAY + 3, thanksBubble);
+
+  // Gestures: giver blows kiss, receiver thumbs up / jumps
+  if (CONFIG.GESTURE_ENABLED) {
+    if (shouldGesture('gift_give')) {
+      const g = pickGesture('gift_give');
+      if (g) rconBotAction(agent.id, g).catch(() => {});
+    }
+    if (shouldGesture('gift_receive')) {
+      const g = pickGesture('gift_receive');
+      if (g) rconBotAction(target.id, g).catch(() => {});
+    }
+  }
+
+  // Effects: sparkle on receiver
+  if (CONFIG.EFFECT_ENABLED) {
+    rconBotEffect(target.id, 4, 15).catch(() => {});
+  }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_GIFT_RELATIONSHIP_DELTA);
   queueRelationshipChange(target.id, agent.id, CONFIG.DRAMA_GIFT_RELATIONSHIP_DELTA);

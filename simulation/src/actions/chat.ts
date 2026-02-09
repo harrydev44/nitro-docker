@@ -7,6 +7,8 @@ import { getOpinion } from '../chat/announcements.js';
 import { getMemoryGossip } from '../chat/gossip.js';
 import { getCachedMemories } from '../world/state-cache.js';
 import { generateAIChat } from '../ai/chat-generator.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
+import { rconBotAction } from '../emulator/rcon.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 export async function agentChat(agent: Agent, world: WorldState): Promise<void> {
@@ -76,6 +78,12 @@ export async function agentChat(agent: Agent, world: WorldState): Promise<void> 
   }
 
   queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);
+
+  // Occasional laugh gesture during happy chat
+  if (CONFIG.GESTURE_ENABLED && shouldGesture('happy_chat')) {
+    const g = pickGesture('happy_chat');
+    if (g) rconBotAction(agent.id, g).catch(() => {});
+  }
 
   // Maybe start a new conversation chain
   if (!isAnnouncement && roommates.length > 0 && !world.activeConversations.has(agent.currentRoomId!)) {

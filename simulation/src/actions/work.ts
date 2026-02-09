@@ -2,6 +2,9 @@ import { CONFIG, JOB_TYPES } from '../config.js';
 import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory, queueAgentState } from '../world/batch-writer.js';
 import { completeGoal } from '../engine/goals.js';
 import { getWorkAnnouncement } from '../chat/announcements.js';
+import { pickBubbleForContext } from '../chat/bubble-styles.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
+import { rconBotAction, rconBotEffect } from '../emulator/rcon.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 export async function agentWork(agent: Agent, world: WorldState): Promise<void> {
@@ -53,10 +56,22 @@ export async function agentWork(agent: Agent, world: WorldState): Promise<void> 
     completeGoal(agent, 'work');
     completeGoal(agent, 'earn');
 
-    // Announce work completion with personality flavor
+    // Thumb-up gesture on work completion
+    if (CONFIG.GESTURE_ENABLED && shouldGesture('work_complete')) {
+      const g = pickGesture('work_complete');
+      if (g) rconBotAction(agent.id, g).catch(() => {});
+    }
+
+    // Stars effect on work completion
+    if (CONFIG.EFFECT_ENABLED) {
+      rconBotEffect(agent.id, 3, 10).catch(() => {});
+    }
+
+    // Announce work completion with personality flavor + work bubble
     if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
+      const workBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('work') : -1;
       const msg = getWorkAnnouncement(agent, jobName, room.name, totalEarned);
-      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY, workBubble);
 
       if (agent.currentRoomId) {
         const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };

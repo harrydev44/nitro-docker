@@ -5,6 +5,9 @@ import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory }
 import { completeGoal } from '../engine/goals.js';
 import { getTradeAnnouncement, getTradeBuyerAnnouncement } from '../chat/announcements.js';
 import { getItemName } from '../world/item-catalog.js';
+import { pickBubbleForContext } from '../chat/bubble-styles.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
+import { rconBotAction } from '../emulator/rcon.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 interface ItemRow {
@@ -90,11 +93,24 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
 
       completeGoal(agent, 'trade');
 
+      // Thumb-up gesture for both traders
+      if (CONFIG.GESTURE_ENABLED) {
+        if (shouldGesture('trade_complete')) {
+          const g = pickGesture('trade_complete');
+          if (g) rconBotAction(agent.id, g).catch(() => {});
+        }
+        if (shouldGesture('trade_complete')) {
+          const g = pickGesture('trade_complete');
+          if (g) rconBotAction(partner.id, g).catch(() => {});
+        }
+      }
+
       // Announcement-style trade chat with item names and personality flavor
       const itemName = getItemName(offeredItem.item_id);
+      const tradeBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('trade') : -1;
       if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
         const sellerMsg = getTradeAnnouncement(agent, partner.name, itemName, price);
-        queueBotChat(agent.id, sellerMsg, CONFIG.MIN_CHAT_DELAY);
+        queueBotChat(agent.id, sellerMsg, CONFIG.MIN_CHAT_DELAY, tradeBubble);
 
         // Track as announcement in room chat history
         if (agent.currentRoomId) {
@@ -106,7 +122,7 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
 
       if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
         const buyerMsg = getTradeBuyerAnnouncement(partner, agent.name, itemName, price);
-        queueBotChat(partner.id, buyerMsg, CONFIG.MIN_CHAT_DELAY + 2);
+        queueBotChat(partner.id, buyerMsg, CONFIG.MIN_CHAT_DELAY + 2, tradeBubble);
 
         if (agent.currentRoomId) {
           const chatMsg: ChatMessage = { agentId: partner.id, agentName: partner.name, message: buyerMsg, tick: world.tick, isAnnouncement: true };

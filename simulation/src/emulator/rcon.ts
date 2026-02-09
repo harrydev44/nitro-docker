@@ -42,9 +42,9 @@ function sendRCON(key: string, data: Record<string, any>): Promise<RCONResponse>
   });
 }
 
-export async function rconBotTalk(botId: number, message: string): Promise<boolean> {
+export async function rconBotTalk(botId: number, message: string, bubbleId = -1): Promise<boolean> {
   try {
-    const res = await sendRCON('talkbot', { bot_id: botId, message });
+    const res = await sendRCON('talkbot', { bot_id: botId, message, bubble_id: bubbleId });
     return res.status === 0;
   } catch {
     return false;
@@ -54,6 +54,33 @@ export async function rconBotTalk(botId: number, message: string): Promise<boole
 export async function rconBotDance(botId: number, danceId: number): Promise<boolean> {
   try {
     const res = await sendRCON('botdance', { bot_id: botId, dance_id: danceId });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function rconBotAction(botId: number, actionId: number): Promise<boolean> {
+  try {
+    const res = await sendRCON('botaction', { bot_id: botId, action_id: actionId });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function rconBotShout(botId: number, message: string): Promise<boolean> {
+  try {
+    const res = await sendRCON('botshout', { bot_id: botId, message });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function rconBotEffect(botId: number, effectId: number, duration = 30): Promise<boolean> {
+  try {
+    const res = await sendRCON('boteffect', { bot_id: botId, effect_id: effectId, duration });
     return res.status === 0;
   } catch {
     return false;

@@ -10,7 +10,8 @@ import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
 import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import { loadItemCatalog } from './world/item-catalog.js';
-import { rconBotDance } from './emulator/rcon.js';
+import { rconBotDance, rconBotAction, rconBotEffect } from './emulator/rcon.js';
+import { shouldGesture, pickGesture } from './chat/gesture-triggers.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -144,6 +145,18 @@ async function tick(world: WorldState): Promise<void> {
         const danceId = (bot.id % 4) + 1; // deterministic per bot so it doesn't flicker
         rconBotDance(bot.id, danceId).catch(() => {});
         party.attendees.add(bot.id);
+      }
+
+      // Random party gesture: 1 random bot per pulse waves/laughs/jumps
+      if (CONFIG.GESTURE_ENABLED && botsInRoom.length > 0 && shouldGesture('party_pulse')) {
+        const randomBot = botsInRoom[Math.floor(Math.random() * botsInRoom.length)];
+        const g = pickGesture('party_pulse');
+        if (g) rconBotAction(randomBot.id, g).catch(() => {});
+      }
+
+      // Refresh host spotlight effect every 10 ticks
+      if (CONFIG.EFFECT_ENABLED && currentTick % 10 === 0) {
+        rconBotEffect(party.hostAgentId, 10, 60).catch(() => {});
       }
     }
   }

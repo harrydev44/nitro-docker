@@ -105,6 +105,12 @@ export const CONFIG = {
   PARTY_CHAT_SCORE_BONUS: 0.3,
   PARTY_HOST_COOLDOWN_TICKS: 100,
 
+  // Visual expression settings
+  GESTURE_ENABLED: true,
+  EFFECT_ENABLED: true,
+  STYLED_BUBBLES_ENABLED: true,
+  BUBBLE_PROBABILITY: 0.7,  // chance to use context bubble vs default
+
   // Stats HTTP server
   STATS_PORT: 3333,
 } as const;

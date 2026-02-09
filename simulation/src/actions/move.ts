@@ -1,10 +1,11 @@
 import { CONFIG } from '../config.js';
 import { getCachedFriends, getCachedEnemies, getCachedCloseFriends } from '../world/state-cache.js';
 import { queueBotMove, queueBotChat } from '../world/batch-writer.js';
-import { rconBotDance } from '../emulator/rcon.js';
+import { rconBotDance, rconBotAction } from '../emulator/rcon.js';
 import { getRandomFreeTile } from '../world/room-models.js';
 import { getHomeRoomEnterChat, getHomeRoomWelcomeChat } from '../chat/announcements.js';
 import { getPartyArrival } from '../chat/party-templates.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
 import type { Agent, WorldState, SimRoom, ChatMessage } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
@@ -55,7 +56,19 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
     }
   }
 
-  // Party arrival: if entering a party room, add as attendee, dance, maybe chat
+  // Wave when entering a room with friends
+  if (CONFIG.GESTURE_ENABLED) {
+    const friends = getCachedFriends(agent.id);
+    const friendsInRoom = world.agents.filter(
+      a => a.currentRoomId === targetRoom.id && friends.includes(a.id)
+    );
+    if (friendsInRoom.length > 0 && shouldGesture('enter_room')) {
+      const g = pickGesture('enter_room');
+      if (g) rconBotAction(agent.id, g).catch(() => {});
+    }
+  }
+
+  // Party arrival: if entering a party room, add as attendee, dance, maybe chat + gesture
   const party = world.activeParties.find(p => p.roomId === targetRoom.id);
   if (party) {
     party.attendees.add(agent.id);
@@ -63,6 +76,11 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
     rconBotDance(agent.id, danceId).catch(() => {});
     if (Math.random() < 0.5) {
       queueBotChat(agent.id, getPartyArrival(), CONFIG.MIN_CHAT_DELAY);
+    }
+    // Party arrival gesture (wave/jump)
+    if (CONFIG.GESTURE_ENABLED && shouldGesture('party_arrive')) {
+      const g = pickGesture('party_arrive');
+      if (g) rconBotAction(agent.id, g).catch(() => {});
     }
   }
 }

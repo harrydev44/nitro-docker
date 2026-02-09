@@ -1,7 +1,9 @@
 import { CONFIG } from '../config.js';
-import { queueBotChat, queueCreditChange, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
-import { rconBotDance } from '../emulator/rcon.js';
+import { queueBotShout, queueCreditChange, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
+import { rconBotDance, rconBotAction, rconBotEffect } from '../emulator/rcon.js';
 import { getPartyAnnouncement } from '../chat/party-templates.js';
+import { pickBubbleForContext } from '../chat/bubble-styles.js';
+import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
 import type { Agent, WorldState } from '../types.js';
 
 function randomDance(): number {
@@ -71,14 +73,34 @@ export async function hostParty(agent: Agent, world: WorldState): Promise<void> 
     rconBotDance(mate.id, randomDance()).catch(() => {});
   }
 
-  // Announce the party
+  // Host SHOUTS the announcement with party bubble
   const personalityType = agent.personality.sociability > 0.7
     ? 'social'
     : agent.personality.ambition > 0.7
       ? 'ambitious'
       : 'generic';
   const announcement = getPartyAnnouncement(room.name, personalityType);
-  queueBotChat(agent.id, announcement, CONFIG.MIN_CHAT_DELAY);
+  const partyBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('party') : -1;
+  queueBotShout(agent.id, announcement, partyBubble);
+
+  // Host gets spotlight effect
+  if (CONFIG.EFFECT_ENABLED) {
+    rconBotEffect(agent.id, 10, 60).catch(() => {});
+  }
+
+  // Gestures: host waves/jumps, guests wave
+  if (CONFIG.GESTURE_ENABLED) {
+    if (shouldGesture('party_host')) {
+      const g = pickGesture('party_host');
+      if (g) rconBotAction(agent.id, g).catch(() => {});
+    }
+    for (const mate of roommates.slice(0, 5)) {
+      if (shouldGesture('party_arrive')) {
+        const g = pickGesture('party_arrive');
+        if (g) rconBotAction(mate.id, g).catch(() => {});
+      }
+    }
+  }
 
   // Build relationships with current roommates
   for (const mate of roommates.slice(0, 5)) {

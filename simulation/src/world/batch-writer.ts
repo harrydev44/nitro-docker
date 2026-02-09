@@ -1,5 +1,5 @@
 import { getPool } from '../db.js';
-import { rconBotTalk } from '../emulator/rcon.js';
+import { rconBotTalk, rconBotShout } from '../emulator/rcon.js';
 
 // Accumulated writes per tick, flushed in bulk at tick end
 
@@ -50,7 +50,7 @@ let memoryInserts: MemoryInsert[] = [];
 let agentStateUpdates: Map<number, AgentStateUpdate> = new Map();
 
 // RCON chat queue — sent directly to emulator, no DB roundtrip
-const pendingRconChats: { botId: number; message: string }[] = [];
+const pendingRconChats: { botId: number; message: string; bubbleId: number; shout: boolean }[] = [];
 
 // --- Buffer methods (called during tick, no DB) ---
 
@@ -63,9 +63,13 @@ export function queueBotMove(botId: number, roomId: number, x: number, y: number
   botUpdates.set(botId, existing);
 }
 
-export function queueBotChat(botId: number, chatLine: string, _delay: number): void {
+export function queueBotChat(botId: number, chatLine: string, _delay: number, bubbleId = -1): void {
   // Send via RCON for one-shot delivery (no emulator auto-repeat)
-  pendingRconChats.push({ botId, message: chatLine });
+  pendingRconChats.push({ botId, message: chatLine, bubbleId, shout: false });
+}
+
+export function queueBotShout(botId: number, chatLine: string, bubbleId = -1): void {
+  pendingRconChats.push({ botId, message: chatLine, bubbleId, shout: true });
 }
 
 export function queueCreditChange(userId: number, delta: number): void {
@@ -189,7 +193,11 @@ export async function flushAll(): Promise<void> {
     // Send queued RCON chats (fire-and-forget, after DB transaction)
     const chats = pendingRconChats.splice(0);
     for (const chat of chats) {
-      rconBotTalk(chat.botId, chat.message).catch(() => {});
+      if (chat.shout) {
+        rconBotShout(chat.botId, chat.message).catch(() => {});
+      } else {
+        rconBotTalk(chat.botId, chat.message, chat.bubbleId).catch(() => {});
+      }
     }
   }
 }
