@@ -129,6 +129,13 @@ export interface ActiveParty {
   attendees: Set<number>;
 }
 
+export interface TickerEvent {
+  type: 'party_start' | 'party_end' | 'rival_clash' | 'friend_reunion' | 'celebrity_spotted' | 'big_trade' | 'gift' | 'new_room' | 'argument';
+  message: string;
+  tick: number;
+  roomName?: string;
+}
+
 export interface WorldState {
   rooms: SimRoom[];
   agents: Agent[];
@@ -136,6 +143,7 @@ export interface WorldState {
   roomChatHistory: Map<number, ChatMessage[]>;
   activeConversations: Map<number, ActiveConversation>;
   activeParties: ActiveParty[];
+  tickerEvents: TickerEvent[];
 }
 
 export interface ChatMessage {

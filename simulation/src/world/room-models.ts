@@ -8,13 +8,31 @@ interface FloorTile {
 // Parsed floor tiles per model name, loaded once on startup
 const modelFloorTiles: Map<string, FloorTile[]> = new Map();
 
+// Raw heightmap grids per model name (2D char arrays), loaded once on startup
+const modelHeightmapGrids: Map<string, string[][]> = new Map();
+
+// Door positions per model name, loaded once on startup
+const modelDoorInfo: Map<string, { x: number; y: number }> = new Map();
+
 // Item footprints from items_base, loaded once on startup
 // itemBaseId -> { width, length, allowSit }
 const itemSizes: Map<number, { width: number; length: number; allowSit: boolean }> = new Map();
 
-// Occupied tiles per room, refreshed every tick via refreshOccupiedTiles()
+// Occupied tiles per room (furniture + bots), refreshed every tick via refreshOccupiedTiles()
 // roomId -> Set of "x,y" strings
 const roomOccupied: Map<number, Set<string>> = new Map();
+
+// Bot-only positions per room (for bot placement — excludes sittable furniture)
+// roomId -> Set of "x,y" strings
+const roomBotTiles: Map<number, Set<string>> = new Map();
+
+// Sittable furniture tiles per room (chairs, sofas, beds)
+// roomId -> Array of { x, y } where bots can sit
+const roomSittableTiles: Map<number, FloorTile[]> = new Map();
+
+// Bot positions by bot ID (for conversation proximity lookups)
+// botId -> { x, y, roomId }
+const botPositions: Map<number, { x: number; y: number; roomId: number }> = new Map();
 
 /**
  * Load room model heightmaps from DB and parse into valid floor tile lists.
@@ -27,6 +45,11 @@ export async function loadRoomModels(): Promise<void> {
   for (const model of models) {
     const tiles: FloorTile[] = [];
     const rows = model.heightmap.split(/\r?\n/).map(r => r.trim()).filter(r => r.length > 0);
+
+    // Cache raw grid and door position for zone computation
+    const grid: string[][] = rows.map(r => r.split(''));
+    modelHeightmapGrids.set(model.name, grid);
+    modelDoorInfo.set(model.name, { x: model.door_x, y: model.door_y });
 
     for (let y = 0; y < rows.length; y++) {
       for (let x = 0; x < rows[y].length; x++) {
@@ -59,7 +82,10 @@ export async function loadRoomModels(): Promise<void> {
  */
 export async function refreshOccupiedTiles(): Promise<void> {
   roomOccupied.clear();
+  roomBotTiles.clear();
+  roomSittableTiles.clear();
 
+  // 1. Load furniture positions
   const items = await query<{ room_id: number; item_id: number; x: number; y: number; rot: number }>(
     `SELECT i.room_id, i.item_id, i.x, i.y, i.rot
      FROM items i
@@ -72,6 +98,7 @@ export async function refreshOccupiedTiles(): Promise<void> {
     const size = itemSizes.get(item.item_id);
     const w = size?.width || 1;
     const l = size?.length || 1;
+    const sittable = size?.allowSit || false;
 
     // Rotation: 0/4 = normal, 2/6 = rotated 90 degrees (swap width/length)
     const rotated = item.rot === 2 || item.rot === 6;
@@ -86,8 +113,32 @@ export async function refreshOccupiedTiles(): Promise<void> {
     for (let dx = 0; dx < effW; dx++) {
       for (let dy = 0; dy < effL; dy++) {
         occ.add(`${item.x + dx},${item.y + dy}`);
+
+        // Track sittable tiles so bots can sit on them
+        if (sittable) {
+          if (!roomSittableTiles.has(item.room_id)) {
+            roomSittableTiles.set(item.room_id, []);
+          }
+          roomSittableTiles.get(item.room_id)!.push({ x: item.x + dx, y: item.y + dy });
+        }
       }
     }
+  }
+
+  // 2. Load bot positions — bots should not overlap each other
+  botPositions.clear();
+  const bots = await query<{ id: number; room_id: number; x: number; y: number }>(
+    `SELECT b.id, b.room_id, b.x, b.y FROM bots b
+     JOIN users u ON b.user_id = u.id
+     WHERE b.room_id > 0 AND u.username LIKE 'sim_owner_%'`
+  );
+
+  for (const bot of bots) {
+    if (!roomBotTiles.has(bot.room_id)) {
+      roomBotTiles.set(bot.room_id, new Set());
+    }
+    roomBotTiles.get(bot.room_id)!.add(`${bot.x},${bot.y}`);
+    botPositions.set(bot.id, { x: bot.x, y: bot.y, roomId: bot.room_id });
   }
 }
 
@@ -100,24 +151,95 @@ export function isTileOccupied(roomId: number, x: number, y: number): boolean {
 }
 
 /**
- * Get a random valid floor tile that is NOT occupied by furniture.
- * For placing bots.
+ * Get a random valid floor tile that is NOT occupied by furniture or other bots.
+ * Prefers sittable furniture tiles (50% chance) so bots sit on chairs/sofas.
+ * Tracks within-tick claims to prevent stacking.
  */
 export function getRandomFreeTile(model: string, roomId: number): { x: number; y: number } {
   const allTiles = modelFloorTiles.get(model);
   if (!allTiles || allTiles.length === 0) return { x: 2, y: 2 };
 
-  const occ = roomOccupied.get(roomId);
-  if (!occ || occ.size === 0) {
-    return allTiles[Math.floor(Math.random() * allTiles.length)];
+  const botOcc = roomBotTiles.get(roomId) || new Set<string>();
+
+  // 50% chance to prefer a sittable tile (chair/sofa/bed)
+  if (Math.random() < 0.5) {
+    const sittable = roomSittableTiles.get(roomId) || [];
+    const freeSeat = sittable.filter(t => !botOcc.has(`${t.x},${t.y}`));
+    if (freeSeat.length > 0) {
+      const tile = freeSeat[Math.floor(Math.random() * freeSeat.length)];
+      claimBotTile(roomId, tile.x, tile.y);
+      return tile;
+    }
   }
 
-  const free = allTiles.filter(t => !occ.has(`${t.x},${t.y}`));
+  // Otherwise pick any free floor tile (not occupied by furniture or bots)
+  const furniOcc = roomOccupied.get(roomId) || new Set<string>();
+  const free = allTiles.filter(t => {
+    const key = `${t.x},${t.y}`;
+    return !furniOcc.has(key) && !botOcc.has(key);
+  });
+
+  let tile: { x: number; y: number };
   if (free.length === 0) {
-    // Room totally full of furniture — fallback to any floor tile
-    return allTiles[Math.floor(Math.random() * allTiles.length)];
+    const noBot = allTiles.filter(t => !botOcc.has(`${t.x},${t.y}`));
+    tile = noBot.length > 0
+      ? noBot[Math.floor(Math.random() * noBot.length)]
+      : allTiles[Math.floor(Math.random() * allTiles.length)];
+  } else {
+    tile = free[Math.floor(Math.random() * free.length)];
   }
-  return free[Math.floor(Math.random() * free.length)];
+
+  claimBotTile(roomId, tile.x, tile.y);
+  return tile;
+}
+
+/**
+ * Get a free tile near a target position (within maxDist manhattan distance).
+ * Used for conversation proximity — walking toward chat partner.
+ * Falls back to getRandomFreeTile if no nearby tile available.
+ */
+export function getNearbyFreeTile(
+  model: string, roomId: number, targetX: number, targetY: number, maxDist = 2,
+): { x: number; y: number } {
+  const allTiles = modelFloorTiles.get(model);
+  if (!allTiles || allTiles.length === 0) return { x: targetX, y: targetY };
+
+  const furniOcc = roomOccupied.get(roomId) || new Set<string>();
+  const botOcc = roomBotTiles.get(roomId) || new Set<string>();
+
+  // Find free tiles within maxDist of target (prefer sittable ones)
+  const nearby: { x: number; y: number; dist: number; sittable: boolean }[] = [];
+  const sittable = new Set((roomSittableTiles.get(roomId) || []).map(t => `${t.x},${t.y}`));
+
+  for (const t of allTiles) {
+    const dist = Math.abs(t.x - targetX) + Math.abs(t.y - targetY);
+    if (dist > 0 && dist <= maxDist) {
+      const key = `${t.x},${t.y}`;
+      const isOccupied = botOcc.has(key) || (furniOcc.has(key) && !sittable.has(key));
+      if (!isOccupied) {
+        nearby.push({ x: t.x, y: t.y, dist, sittable: sittable.has(key) });
+      }
+    }
+  }
+
+  if (nearby.length === 0) return getRandomFreeTile(model, roomId);
+
+  // Prefer sittable tiles, then closest
+  nearby.sort((a, b) => {
+    if (a.sittable !== b.sittable) return a.sittable ? -1 : 1;
+    return a.dist - b.dist;
+  });
+
+  const tile = nearby[0];
+  claimBotTile(roomId, tile.x, tile.y);
+  return tile;
+}
+
+function claimBotTile(roomId: number, x: number, y: number): void {
+  if (!roomBotTiles.has(roomId)) {
+    roomBotTiles.set(roomId, new Set());
+  }
+  roomBotTiles.get(roomId)!.add(`${x},${y}`);
 }
 
 /**
@@ -176,4 +298,39 @@ export function getRandomFloorTile(model: string): { x: number; y: number } {
  */
 export function getFloorTiles(model: string): FloorTile[] {
   return modelFloorTiles.get(model) || [{ x: 2, y: 2 }];
+}
+
+/**
+ * Get the raw heightmap grid for a model (2D char array).
+ */
+export function getHeightmapGrid(model: string): string[][] | null {
+  return modelHeightmapGrids.get(model) || null;
+}
+
+/**
+ * Get the door position for a model.
+ */
+export function getDoorInfo(model: string): { x: number; y: number } | null {
+  return modelDoorInfo.get(model) || null;
+}
+
+/**
+ * Get item size info for a given item base ID.
+ */
+export function getItemSize(itemBaseId: number): { width: number; length: number; allowSit: boolean } | null {
+  return itemSizes.get(itemBaseId) || null;
+}
+
+/**
+ * Get the set of occupied tile keys for a room.
+ */
+export function getOccupiedTiles(roomId: number): Set<string> {
+  return roomOccupied.get(roomId) || new Set();
+}
+
+/**
+ * Get a bot's current position.
+ */
+export function getBotPosition(botId: number): { x: number; y: number; roomId: number } | null {
+  return botPositions.get(botId) || null;
 }

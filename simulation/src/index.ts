@@ -12,6 +12,9 @@ import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import { loadItemCatalog } from './world/item-catalog.js';
 import { rconBotDance, rconBotAction, rconBotEffect } from './emulator/rcon.js';
 import { shouldGesture, pickGesture } from './chat/gesture-triggers.js';
+import { refreshFame, getFameList } from './world/reputation.js';
+import { refreshCliques } from './world/cliques.js';
+import { getDayPeriod } from './world/day-cycle.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -117,9 +120,28 @@ async function tick(world: WorldState): Promise<void> {
   if (currentTick % 10 === 0) {
     await updatePopularity(world);
   }
+  if (currentTick % 50 === 0) {
+    await refreshFame(world.agents);
+    await refreshCliques(world.agents);
+
+    // Celebrity VFX: apply visual effects to famous agents
+    if (CONFIG.EFFECT_ENABLED) {
+      const fameList = getFameList();
+      for (const fame of fameList.slice(0, 15)) {
+        const agent = world.agents.find(a => a.id === fame.agentId);
+        if (!agent || !agent.currentRoomId) continue;
+        if (fame.tier === 'legend') {
+          rconBotEffect(fame.agentId, 10, 200).catch(() => {}); // spotlight
+        } else if (fame.tier === 'celebrity') {
+          rconBotEffect(fame.agentId, 7, 200).catch(() => {});  // hearts
+        }
+      }
+    }
+  }
   if (currentTick % 100 === 0) {
     await decayRelationships();
-    console.log(`[TICK ${currentTick}] Relationship decay applied`);
+    const period = getDayPeriod(currentTick);
+    console.log(`[TICK ${currentTick}] Decay applied | Period: ${period}`);
   }
 
   // Prune old chat history
@@ -171,9 +193,20 @@ async function tick(world: WorldState): Promise<void> {
     for (const bot of botsInRoom) {
       rconBotDance(bot.id, 0).catch(() => {});
     }
+    world.tickerEvents.push({
+      type: 'party_end',
+      message: `Party at ${party.hostName}'s place ended — ${party.attendees.size} attended!`,
+      tick: currentTick,
+      roomName: world.rooms.find(r => r.id === party.roomId)?.name,
+    });
     console.log(`[PARTY] Party at room ${party.roomId} ended (${party.attendees.size} attended, hosted by ${party.hostName})`);
   }
   world.activeParties = world.activeParties.filter(p => currentTick < p.endTick);
+
+  // Prune old ticker events (keep last 30)
+  if (world.tickerEvents.length > 30) {
+    world.tickerEvents = world.tickerEvents.slice(-30);
+  }
 }
 
 async function main(): Promise<void> {
@@ -200,6 +233,7 @@ async function main(): Promise<void> {
     roomChatHistory: new Map(),
     activeConversations: new Map(),
     activeParties: [],
+    tickerEvents: [],
   };
 
   console.log(`[INIT] Loaded ${world.agents.length} agents, ${world.rooms.length} rooms`);

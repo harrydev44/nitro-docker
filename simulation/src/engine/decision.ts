@@ -10,6 +10,7 @@ import { executeDrama } from '../actions/drama.js';
 import { hostParty } from '../actions/host-party.js';
 import { getCachedFriends, getCachedEnemies, getCachedInventoryCount, getCachedRelationship, getCachedRoomItemCount } from '../world/state-cache.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
+import { getTimeMultiplier } from '../world/day-cycle.js';
 import type { Agent, WorldState, ActionScore } from '../types.js';
 
 export async function runDecisionEngine(agent: Agent, world: WorldState): Promise<void> {
@@ -21,6 +22,13 @@ export async function runDecisionEngine(agent: Agent, world: WorldState): Promis
 
   // Score each possible action (no DB calls — uses cached data)
   const scores = scoreActions(agent, world);
+
+  // Apply day cycle time multipliers
+  for (const s of scores) {
+    if (s.action !== 'idle') {
+      s.score *= getTimeMultiplier(world.tick, s.action);
+    }
+  }
 
   // Add personality noise (impulsiveness)
   for (const s of scores) {

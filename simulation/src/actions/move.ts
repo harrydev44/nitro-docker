@@ -5,7 +5,11 @@ import { rconBotDance, rconBotAction } from '../emulator/rcon.js';
 import { getRandomFreeTile } from '../world/room-models.js';
 import { getHomeRoomEnterChat, getHomeRoomWelcomeChat } from '../chat/announcements.js';
 import { getPartyArrival } from '../chat/party-templates.js';
-import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
+import { shouldGesture, pickGesture, ACTION } from '../chat/gesture-triggers.js';
+import { getCelebrityAttraction, isCelebrity } from '../world/reputation.js';
+import { getCliqueRoomBonus } from '../world/cliques.js';
+import { getRivalEnterChat, getRivalResponseChat, getFriendReunionChat, getFriendReunionResponse, getCelebrityReaction } from '../chat/encounters.js';
+import { pickBubbleForContext } from '../chat/bubble-styles.js';
 import type { Agent, WorldState, SimRoom, ChatMessage } from '../types.js';
 
 export async function moveAgent(agent: Agent, world: WorldState): Promise<void> {
@@ -81,6 +85,70 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
     if (CONFIG.GESTURE_ENABLED && shouldGesture('party_arrive')) {
       const g = pickGesture('party_arrive');
       if (g) rconBotAction(agent.id, g).catch(() => {});
+    }
+  }
+
+  // --- Encounter reactions ---
+  const enemies = getCachedEnemies(agent.id);
+  const closeFriends = getCachedCloseFriends(agent.id);
+
+  // Rival encounter: hostile chat exchange
+  const rivalsInRoom = world.agents.filter(
+    a => a.currentRoomId === targetRoom.id && a.id !== agent.id && enemies.includes(a.id)
+  );
+  if (rivalsInRoom.length > 0 && Math.random() < 0.5) {
+    const rival = rivalsInRoom[Math.floor(Math.random() * rivalsInRoom.length)];
+    const bubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('argument') : -1;
+    queueBotChat(agent.id, getRivalEnterChat(), CONFIG.MIN_CHAT_DELAY, bubble);
+    queueBotChat(rival.id, getRivalResponseChat(), CONFIG.MIN_CHAT_DELAY + 4, bubble);
+    world.tickerEvents.push({
+      type: 'rival_clash',
+      message: `${agent.name} and ${rival.name} face off at ${targetRoom.name}!`,
+      tick: world.tick,
+      roomName: targetRoom.name,
+    });
+  }
+
+  // Celebrity sighting: fan reaction when entering room with a celebrity
+  if (!party) { // skip during parties, too noisy
+    const celebsInRoom = world.agents.filter(
+      a => a.currentRoomId === targetRoom.id && a.id !== agent.id && isCelebrity(a.id)
+    );
+    if (celebsInRoom.length > 0 && Math.random() < 0.25) {
+      const celeb = celebsInRoom[Math.floor(Math.random() * celebsInRoom.length)];
+      queueBotChat(agent.id, getCelebrityReaction(celeb.name), CONFIG.MIN_CHAT_DELAY);
+      if (CONFIG.GESTURE_ENABLED) {
+        rconBotAction(agent.id, ACTION.WAVE).catch(() => {});
+      }
+      world.tickerEvents.push({
+        type: 'celebrity_spotted',
+        message: `${celeb.name} spotted at ${targetRoom.name} - fans going wild!`,
+        tick: world.tick,
+        roomName: targetRoom.name,
+      });
+    }
+  }
+
+  // Close friend reunion: warm greeting (more dramatic than the simple wave above)
+  if (!party) {
+    const closeFriendsInRoom = world.agents.filter(
+      a => a.currentRoomId === targetRoom.id && a.id !== agent.id && closeFriends.includes(a.id)
+    );
+    if (closeFriendsInRoom.length > 0 && Math.random() < 0.35) {
+      const friend = closeFriendsInRoom[Math.floor(Math.random() * closeFriendsInRoom.length)];
+      const bubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('reunion') : -1;
+      queueBotChat(agent.id, getFriendReunionChat(friend.name), CONFIG.MIN_CHAT_DELAY, bubble);
+      queueBotChat(friend.id, getFriendReunionResponse(), CONFIG.MIN_CHAT_DELAY + 4, bubble);
+      if (CONFIG.GESTURE_ENABLED) {
+        rconBotAction(agent.id, ACTION.WAVE).catch(() => {});
+        rconBotAction(friend.id, ACTION.BLOW_KISS).catch(() => {});
+      }
+      world.tickerEvents.push({
+        type: 'friend_reunion',
+        message: `${agent.name} and ${friend.name} reunited at ${targetRoom.name}!`,
+        tick: world.tick,
+        roomName: targetRoom.name,
+      });
     }
   }
 }
@@ -169,6 +237,12 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
         score += CONFIG.PARTY_MOVE_SCORE_BONUS;
       }
     }
+
+    // Celebrity attraction: famous agents draw others
+    score += getCelebrityAttraction(room.id, world.agents);
+
+    // Clique bonus: agents prefer rooms with clique-mates
+    score += getCliqueRoomBonus(agent.id, room.id, world.agents);
 
     score += Math.random() * 0.1;
     return { room, score };

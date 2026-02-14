@@ -61,7 +61,7 @@ export async function generateAllAgents(): Promise<void> {
 
     const result = await execute(
       `INSERT INTO bots (user_id, room_id, name, motto, figure, gender, x, y, z, rot, chat_lines, chat_auto, chat_random, chat_delay, freeroam, type, effect, bubble_id)
-       VALUES (?, 0, ?, ?, ?, ?, 0, 0, 0, 0, '', '1', '1', ?, '0', 'generic', 0, 0)`,
+       VALUES (?, 0, ?, ?, ?, ?, 0, 0, 0, 0, '', '1', '1', ?, '1', 'generic', 0, 0)`,
       [ownerId, name, motto, figure, gender, CONFIG.MIN_CHAT_DELAY]
     );
 

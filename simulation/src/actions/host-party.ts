@@ -116,5 +116,12 @@ export async function hostParty(agent: Agent, world: WorldState): Promise<void> 
   });
 
   hostCooldowns.set(agent.id, world.tick);
+
+  world.tickerEvents.push({
+    type: 'party_start',
+    message: `PARTY TIME! ${agent.name} is throwing a party at ${room.name}!`,
+    tick: world.tick,
+    roomName: room.name,
+  });
   console.log(`[PARTY] ${agent.name} hosting party at ${room.name} (${duration} ticks, cost ${CONFIG.PARTY_COST}cr)`);
 }

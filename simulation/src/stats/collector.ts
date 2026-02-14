@@ -1,7 +1,10 @@
 import http from 'node:http';
 import { CONFIG } from '../config.js';
 import { query } from '../db.js';
-import type { WorldState } from '../types.js';
+import { getDayPeriod, getDayProgress } from '../world/day-cycle.js';
+import { getFameList, isCelebrity } from '../world/reputation.js';
+import { getCliqueSummary } from '../world/cliques.js';
+import type { WorldState, TickerEvent } from '../types.js';
 
 export function startStatsServer(world: WorldState): void {
   const server = http.createServer(async (req, res) => {
@@ -156,13 +159,75 @@ async function collectStats(world: WorldState) {
     };
   });
 
+  // Generate room atmosphere and hotness scores
+  const roomAtmosphere: Record<number, { atmosphere: string; hotness: number }> = {};
+  for (const room of world.rooms) {
+    const botsInRoom = world.agents.filter(a => a.currentRoomId === room.id);
+    const partyHere = world.activeParties.find(p => p.roomId === room.id);
+    const celebsHere = botsInRoom.filter(a => isCelebrity(a.id));
+    const convo = world.activeConversations.get(room.id);
+    const recentTickerHere = world.tickerEvents.filter(
+      e => e.roomName === room.name && world.tick - e.tick < 30
+    );
+
+    // Hotness score for auto-camera prioritization
+    let hotness = botsInRoom.length;
+    if (partyHere) hotness += 10;
+    if (celebsHere.length > 0) hotness += celebsHere.length * 3;
+    if (recentTickerHere.length > 0) hotness += recentTickerHere.length * 4;
+    if (convo) hotness += 2;
+
+    // Generate atmosphere text
+    const period = getDayPeriod(world.tick);
+    let atmo = '';
+    if (botsInRoom.length === 0) {
+      atmo = `Empty ${room.purpose} room`;
+    } else if (partyHere) {
+      atmo = `PARTY! ${botsInRoom.length} agents dancing, hosted by ${partyHere.hostName}`;
+    } else if (recentTickerHere.some(e => e.type === 'argument' || e.type === 'rival_clash')) {
+      const names = botsInRoom.slice(0, 3).map(a => a.name).join(', ');
+      atmo = `Tension in the air... ${names} ${botsInRoom.length > 3 ? `and ${botsInRoom.length - 3} others` : ''}`;
+    } else if (celebsHere.length > 0) {
+      atmo = `${celebsHere[0].name} holding court with ${botsInRoom.length - 1} others`;
+    } else if (convo) {
+      const speaker = world.agents.find(a => a.id === convo.lastSpeakerId);
+      atmo = `${speaker?.name || 'Someone'} chatting with friends (${convo.exchangeCount} exchanges)`;
+    } else if (botsInRoom.length >= 5) {
+      atmo = `Busy ${period} — ${botsInRoom.length} agents hanging out`;
+    } else if (botsInRoom.length >= 2) {
+      const names = botsInRoom.slice(0, 2).map(a => a.name).join(' and ');
+      atmo = `Quiet ${period}, ${names} in the room`;
+    } else {
+      atmo = `${botsInRoom[0].name} alone, ${period} vibes`;
+    }
+
+    roomAtmosphere[room.id] = { atmosphere: atmo, hotness };
+  }
+
+  // Ticker: recent events
+  const ticker = world.tickerEvents
+    .slice(-15)
+    .reverse()
+    .map(e => ({
+      type: e.type,
+      message: e.message,
+      tick: e.tick,
+      roomName: e.roomName,
+    }));
+
   return {
     tick: world.tick,
+    dayPeriod: getDayPeriod(world.tick),
+    dayProgress: getDayProgress(world.tick),
     totalAgents: world.agents.length,
     agentsInRooms: world.agents.filter(a => a.currentRoomId).length,
     totalRooms: world.rooms.length,
     activeRooms: roomStats.length,
-    roomStats,
+    roomStats: roomStats.map(r => ({
+      ...r,
+      atmosphere: roomAtmosphere[r.id]?.atmosphere || '',
+      hotness: roomAtmosphere[r.id]?.hotness || 0,
+    })),
     activeParties,
     richestAgents: richest.map(a => ({
       ...a,
@@ -199,5 +264,16 @@ async function collectStats(world: WorldState) {
         moltbookUrl: moltbookUrlMap.get(a.agent_name),
       })),
     },
+    fame: getFameList().slice(0, 10).map(f => ({
+      name: f.name,
+      score: Math.round(f.fameScore * 100),
+      tier: f.tier,
+      moltbookUrl: f.moltbookUrl,
+    })),
+    cliques: getCliqueSummary(),
+    ticker,
+    roomAtmosphere: Object.fromEntries(
+      Object.entries(roomAtmosphere).map(([id, data]) => [id, data])
+    ),
   };
 }

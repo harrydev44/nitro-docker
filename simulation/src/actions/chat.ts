@@ -1,5 +1,5 @@
 import { CONFIG } from '../config.js';
-import { queueBotChat, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
+import { queueBotChat, queueBotMove, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
 import { getCachedRelationship } from '../world/state-cache.js';
 import { getGreeting, getRoomChat, getReply, getIdleChat } from '../chat/templates.js';
 import { getReaction } from '../chat/reactions.js';
@@ -9,6 +9,7 @@ import { getCachedMemories } from '../world/state-cache.js';
 import { generateAIChat } from '../ai/chat-generator.js';
 import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
 import { rconBotAction } from '../emulator/rcon.js';
+import { getNearbyFreeTile, getBotPosition } from '../world/room-models.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 export async function agentChat(agent: Agent, world: WorldState): Promise<void> {
@@ -29,6 +30,9 @@ export async function agentChat(agent: Agent, world: WorldState): Promise<void> 
   // 0. Check for active conversation in this room — reply to it (AI priority)
   const convo = world.activeConversations.get(agent.currentRoomId!);
   if (convo && convo.lastSpeakerId !== agent.id && convo.participants.has(agent.id)) {
+    // Walk toward conversation partner (proximity)
+    moveTowardSpeaker(agent, convo.lastSpeakerId, room.model);
+
     const aiReply = await generateAIChat(agent, roommates, room, history, world.tick, {
       lastSpeakerName: convo.lastSpeakerName,
       lastMessage: convo.lastMessage,
@@ -130,4 +134,23 @@ function trackChat(
   }
 
   agent.state = 'chatting';
+}
+
+/**
+ * Move agent toward conversation partner so they chat face-to-face.
+ */
+function moveTowardSpeaker(agent: Agent, speakerId: number, model: string): void {
+  if (!agent.currentRoomId) return;
+  const speakerPos = getBotPosition(speakerId);
+  if (!speakerPos || speakerPos.roomId !== agent.currentRoomId) return;
+
+  const myPos = getBotPosition(agent.id);
+  if (!myPos) return;
+
+  // Already close enough (within 2 tiles)
+  const dist = Math.abs(myPos.x - speakerPos.x) + Math.abs(myPos.y - speakerPos.y);
+  if (dist <= 2) return;
+
+  const tile = getNearbyFreeTile(model, agent.currentRoomId, speakerPos.x, speakerPos.y, 2);
+  queueBotMove(agent.id, agent.currentRoomId, tile.x, tile.y);
 }

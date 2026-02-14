@@ -107,6 +107,13 @@ async function executeArgument(agent: Agent, target: Agent, world: WorldState, r
   dramaCooldowns.set(agent.id, world.tick);
   dramaCooldowns.set(target.id, world.tick);
   agent.state = 'drama';
+
+  world.tickerEvents.push({
+    type: 'argument',
+    message: `HEATED: ${agent.name} and ${target.name} arguing at ${roomName}!`,
+    tick: world.tick,
+    roomName,
+  });
   console.log(`[DRAMA] Argument: ${agent.name} vs ${target.name} in ${roomName}`);
 }
 
@@ -167,6 +174,13 @@ async function executeReunion(agent: Agent, target: Agent, world: WorldState, ro
   dramaCooldowns.set(agent.id, world.tick);
   dramaCooldowns.set(target.id, world.tick);
   agent.state = 'drama';
+
+  world.tickerEvents.push({
+    type: 'friend_reunion',
+    message: `${agent.name} and ${target.name} share an emotional reunion at ${roomName}!`,
+    tick: world.tick,
+    roomName,
+  });
   console.log(`[DRAMA] Reunion: ${agent.name} & ${target.name} in ${roomName}`);
 }
 
@@ -225,5 +239,12 @@ async function executeGift(agent: Agent, target: Agent, world: WorldState, roomN
   dramaCooldowns.set(agent.id, world.tick);
   dramaCooldowns.set(target.id, world.tick);
   agent.state = 'drama';
+
+  world.tickerEvents.push({
+    type: 'gift',
+    message: `${agent.name} surprised ${target.name} with a gift at ${roomName}!`,
+    tick: world.tick,
+    roomName,
+  });
   console.log(`[DRAMA] Gift: ${agent.name} -> ${target.name} in ${roomName}`);
 }
