@@ -1,12 +1,12 @@
 export const CONFIG = {
   // Tick settings
-  TICK_INTERVAL_MS: parseInt(process.env.TICK_INTERVAL_MS || '3000'),
+  TICK_INTERVAL_MS: parseInt(process.env.TICK_INTERVAL_MS || '1500'),
 
   // Agent settings
   AGENT_COUNT: 200,
   OWNER_COUNT: 8,                // 8 owner users, 25 bots each
   BOTS_PER_OWNER: 25,
-  AGENTS_PER_TICK: 8,            // only N agents act per tick (rotating batch)
+  AGENTS_PER_TICK: 12,           // only N agents act per tick (rotating batch)
   MAX_GOALS_PER_AGENT: 3,
   GOAL_GENERATION_MIN_TICKS: 50,
   GOAL_GENERATION_MAX_TICKS: 100,
@@ -60,7 +60,7 @@ export const CONFIG = {
   FRIEND_PRESENCE_WEIGHT: 0.3,
   CURIOSITY_WEIGHT: 0.2,
   AVOID_WEIGHT: 0.1,
-  ROOM_INERTIA_PROBABILITY: 0.4,  // chance to stay in current room
+  ROOM_INERTIA_PROBABILITY: 0.15,  // chance to stay in current room (lower = more movement)
 
   // Social dynamics settings
   ANNOUNCEMENT_PROBABILITY: 0.3,       // chance to announce after action
@@ -76,8 +76,8 @@ export const CONFIG = {
   AI_MAX_TOKENS: 40,
   AI_TEMPERATURE: 0.9,
   AI_TIMEOUT_MS: 5000,
-  AI_COOLDOWN_TICKS: 5,
-  AI_MAX_CONCURRENT: 3,
+  AI_COOLDOWN_TICKS: 3,
+  AI_MAX_CONCURRENT: 5,
 
   // Conversation chain settings
   CONVERSATION_MAX_EXCHANGES: 4,

@@ -39,60 +39,60 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
 
   const itemCount = getCachedRoomItemCount(room.id);
 
-  // Don't over-furnish (reduced from 30 to 15 for smaller rooms)
+  // Don't over-furnish
   if (itemCount >= 15) {
     completeGoal(agent, 'decorate');
     return;
   }
 
-  // Try to place an item from inventory first
-  const invItems = await query<{ id: number; item_id: number }>(
-    `SELECT id, item_id FROM items WHERE user_id = ? AND room_id = 0 LIMIT 5`,
-    [agent.userId]
-  );
+  // Place multiple items when room is bare (up to 3 at once for empty rooms)
+  const itemsToPlace = itemCount < 3 ? 3 : itemCount < 8 ? 2 : 1;
+  let placed = 0;
 
-  if (invItems.length > 0) {
-    const item = invItems[Math.floor(Math.random() * invItems.length)];
-    const pos = getRandomFurniTile(room.model, room.id, item.item_id);
-    if (!pos) return; // no space
-
-    await execute(
-      `UPDATE items SET room_id = ?, x = ?, y = ?, z = 0, rot = ? WHERE id = ?`,
-      [room.id, pos.x, pos.y, pos.rot || 0, item.id]
+  for (let i = 0; i < itemsToPlace && (itemCount + placed) < 15; i++) {
+    // Try inventory first
+    const invItems = await query<{ id: number; item_id: number }>(
+      `SELECT id, item_id FROM items WHERE user_id = ? AND room_id = 0 LIMIT 5`,
+      [agent.userId]
     );
 
-    if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
-      const furniName = getItemName(item.item_id);
-      const msg = getDecorateAnnouncement(agent, furniName, itemCount + 1);
-      queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
+    if (invItems.length > 0) {
+      const item = invItems[Math.floor(Math.random() * invItems.length)];
+      const pos = getRandomFurniTile(room.model, room.id, item.item_id);
+      if (!pos) break; // no more space
 
-      if (agent.currentRoomId) {
-        const chatMsg: ChatMessage = { agentId: agent.id, agentName: agent.name, message: msg, tick: world.tick, isAnnouncement: true };
-        if (!world.roomChatHistory.has(agent.currentRoomId)) world.roomChatHistory.set(agent.currentRoomId, []);
-        world.roomChatHistory.get(agent.currentRoomId)!.push(chatMsg);
-      }
+      await execute(
+        `UPDATE items SET room_id = ?, x = ?, y = ?, z = 0, rot = ? WHERE id = ?`,
+        [room.id, pos.x, pos.y, pos.rot || 0, item.id]
+      );
+      placed++;
+    } else {
+      // No inventory — buy from catalog and place directly
+      const affordableItems = FURNITURE_CATALOG.filter(f => f.cost <= agent.credits);
+      if (affordableItems.length === 0) break;
+
+      const item = affordableItems[Math.floor(Math.random() * affordableItems.length)];
+      const pos = getRandomFurniTile(room.model, room.id, item.itemId);
+      if (!pos) break; // no more space
+
+      queueCreditChange(agent.userId, -item.cost);
+      agent.credits -= item.cost;
+
+      await execute(
+        `INSERT INTO items (user_id, room_id, item_id, x, y, z, rot, extra_data)
+         VALUES (?, ?, ?, ?, ?, 0, ?, '0')`,
+        [agent.userId, room.id, item.itemId, pos.x, pos.y, pos.rot || 0]
+      );
+      placed++;
     }
-  } else {
-    // No inventory — buy from catalog and place directly
-    const affordableItems = FURNITURE_CATALOG.filter(f => f.cost <= agent.credits);
-    if (affordableItems.length === 0) return;
+  }
 
-    const item = affordableItems[Math.floor(Math.random() * affordableItems.length)];
-    const pos = getRandomFurniTile(room.model, room.id, item.itemId);
-    if (!pos) return; // no space
-
-    queueCreditChange(agent.userId, -item.cost);
-    agent.credits -= item.cost;
-
-    await execute(
-      `INSERT INTO items (user_id, room_id, item_id, x, y, z, rot, extra_data)
-       VALUES (?, ?, ?, ?, ?, 0, ?, '0')`,
-      [agent.userId, room.id, item.itemId, pos.x, pos.y, pos.rot || 0]
-    );
-
+  if (placed > 0) {
+    // Announce last placed item (one announcement per decorate action)
     if (Math.random() < CONFIG.ANNOUNCEMENT_PROBABILITY) {
-      const furniName = getItemName(item.itemId);
-      const msg = getDecorateAnnouncement(agent, furniName, itemCount + 1);
+      const msg = placed > 1
+        ? getDecorateAnnouncement(agent, `${placed} items`, itemCount + placed)
+        : getDecorateAnnouncement(agent, 'new furniture', itemCount + placed);
       queueBotChat(agent.id, msg, CONFIG.MIN_CHAT_DELAY);
 
       if (agent.currentRoomId) {
@@ -105,7 +105,7 @@ export async function agentDecorate(agent: Agent, world: WorldState): Promise<vo
 
   agent.state = 'decorating';
 
-  if (itemCount + 1 >= 10) {
+  if (itemCount + placed >= 10) {
     completeGoal(agent, 'decorate');
   }
 }

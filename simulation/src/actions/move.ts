@@ -156,6 +156,11 @@ function chooseRoom(agent: Agent, world: WorldState): SimRoom | null {
       score += CONFIG.HOME_ROOM_SCORE_BONUS;
     }
 
+    // Own room bonus: agents visit their own rooms to decorate/manage
+    if (room.ownerId === agent.userId) {
+      score += 0.3;
+    }
+
     // Party room bonus: flock to active parties (unless host is a rival)
     const partyInRoom = world.activeParties.find(p => p.roomId === room.id);
     if (partyInRoom) {

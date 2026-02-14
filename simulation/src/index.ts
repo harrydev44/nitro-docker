@@ -73,27 +73,30 @@ async function tick(world: WorldState): Promise<void> {
   const shuffled = [...world.agents].sort(() => Math.random() - 0.5);
   const batch = shuffled.slice(0, CONFIG.AGENTS_PER_TICK);
 
-  // 2. Run decisions for batch of agents (queues writes, no direct DB per agent)
+  // 2. Run decisions for batch of agents IN PARALLEL (queues writes, no direct DB per agent)
   for (const agent of batch) {
     agent.ticksInCurrentRoom++;
-
-    try {
-      await runDecisionEngine(agent, world);
-    } catch (err) {
-      console.error(`[TICK ${currentTick}] Error for agent ${agent.name}:`, err);
-    }
-
-    // Queue agent state save for every active agent
-    queueAgentState({
-      agentId: agent.id,
-      personality: JSON.stringify(agent.personality),
-      preferences: JSON.stringify(agent.preferences),
-      goals: JSON.stringify(agent.goals),
-      state: agent.state,
-      ticksInRoom: agent.ticksInCurrentRoom,
-      ticksWorking: agent.ticksWorking,
-    });
   }
+
+  await Promise.allSettled(
+    batch.map(async (agent) => {
+      try {
+        await runDecisionEngine(agent, world);
+      } catch (err) {
+        console.error(`[TICK ${currentTick}] Error for agent ${agent.name}:`, err);
+      }
+
+      queueAgentState({
+        agentId: agent.id,
+        personality: JSON.stringify(agent.personality),
+        preferences: JSON.stringify(agent.preferences),
+        goals: JSON.stringify(agent.goals),
+        state: agent.state,
+        ticksInRoom: agent.ticksInCurrentRoom,
+        ticksWorking: agent.ticksWorking,
+      });
+    })
+  );
 
   // 3. Flush all batched writes in a single transaction
   try {

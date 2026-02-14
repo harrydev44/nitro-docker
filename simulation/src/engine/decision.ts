@@ -8,7 +8,7 @@ import { agentBuy } from '../actions/buy.js';
 import { agentCreateRoom } from '../actions/create-room.js';
 import { executeDrama } from '../actions/drama.js';
 import { hostParty } from '../actions/host-party.js';
-import { getCachedFriends, getCachedEnemies, getCachedInventoryCount, getCachedRelationship } from '../world/state-cache.js';
+import { getCachedFriends, getCachedEnemies, getCachedInventoryCount, getCachedRelationship, getCachedRoomItemCount } from '../world/state-cache.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
 import type { Agent, WorldState, ActionScore } from '../types.js';
 
@@ -77,9 +77,11 @@ function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
     : [];
 
   // MOVE: curiosity * room_attractiveness + friend_presence
+  const ownRoomElsewhere = world.rooms.some(r => r.ownerId === agent.userId && r.id !== agent.currentRoomId);
   const moveScore = agent.personality.curiosity * 0.5
     + (isInRoom ? 0 : 0.6)  // not in a room = strong push to move
-    + (agent.ticksInCurrentRoom > 15 ? 0.3 : 0)  // been here a while
+    + (agent.ticksInCurrentRoom > 10 ? 0.3 : 0)  // been here a while (reduced from 15)
+    + (ownRoomElsewhere ? 0.15 : 0)  // drawn toward own rooms
     + goalBonus(agent, 'explore');
   scores.push({ action: 'move', score: moveScore });
 
@@ -124,11 +126,15 @@ function scoreActions(agent: Agent, world: WorldState): ActionScore[] {
     scores.push({ action: 'trade', score: tradeScore });
   }
 
-  // DECORATE: only when in own room and has credits
+  // DECORATE: only when in own room and has credits — boosted so rooms actually get furnished
   if (isInRoom && currentRoom!.ownerId === agent.userId && agent.credits > 50) {
     const invCount = getCachedInventoryCount(agent.userId);
-    const decorateScore = 0.3
-      + (invCount > 0 ? 0.1 : 0)
+    const roomItemCount = getCachedRoomItemCount(agent.currentRoomId!);
+    const bareRoomBonus = roomItemCount < 3 ? 0.5 : roomItemCount < 8 ? 0.25 : 0;
+    const decorateScore = 0.6
+      + bareRoomBonus
+      + (invCount > 0 ? 0.15 : 0)
+      + agent.personality.curiosity * 0.3
       + goalBonus(agent, 'decorate');
     scores.push({ action: 'decorate', score: decorateScore });
   }
