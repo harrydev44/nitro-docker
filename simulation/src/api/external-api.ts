@@ -2,10 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { query, execute } from '../db.js';
+import { query, execute, withTransaction } from '../db.js';
 import { rconBotTalk, rconBotShout, rconBotDance, rconBotAction } from '../emulator/rcon.js';
 import { authenticateAgent, registerExternalAgent, updateHeartbeat, getExternalAgentCount } from './external-agents.js';
 import { checkGlobalRate, checkActionRate } from './rate-limiter.js';
+import { FURNITURE_CATALOG } from '../actions/buy.js';
+import { MODELS } from '../actions/create-room.js';
+import { CONFIG } from '../config.js';
 import type { ExternalAgent } from './external-agents.js';
 import type { WorldState } from '../types.js';
 
@@ -23,6 +26,8 @@ const GESTURE_MAP: Record<string, number> = {
   jump: 6,
   thumbs_up: 7,
 };
+
+const FIGURE_REGEX = /^[a-z]{2}-\d+(-\d+)?(\.[a-z]{2}-\d+(-\d+)?)*$/;
 
 // --- Helpers ---
 
@@ -115,7 +120,7 @@ export async function handleExternalAPI(req: IncomingMessage, res: ServerRespons
 
     // Agent profile
     if (url === '/api/v1/agents/me' && method === 'GET') {
-      return handleAgentMe(agent, res);
+      return await handleAgentMe(agent, res);
     }
     if (url === '/api/v1/agents/me' && method === 'PATCH') {
       return await handleAgentUpdate(agent, req, res);
@@ -129,11 +134,21 @@ export async function handleExternalAPI(req: IncomingMessage, res: ServerRespons
       const roomId = parseInt(url.split('/').pop()!);
       return handleWorldRoom(roomId, res);
     }
+    if (url.match(/^\/api\/v1\/world\/room\/\d+\/items$/) && method === 'GET') {
+      const roomId = parseInt(url.split('/')[5]);
+      return await handleWorldRoomItems(agent, roomId, res);
+    }
     if (url === '/api/v1/world/agents' && method === 'GET') {
       return handleWorldAgents(res);
     }
     if (url === '/api/v1/world/me' && method === 'GET') {
-      return handleWorldMe(agent, res);
+      return await handleWorldMe(agent, res);
+    }
+    if (url === '/api/v1/world/catalog' && method === 'GET') {
+      return handleWorldCatalog(res);
+    }
+    if (url === '/api/v1/world/inventory' && method === 'GET') {
+      return await handleWorldInventory(agent, res);
     }
 
     // Actions
@@ -151,6 +166,30 @@ export async function handleExternalAPI(req: IncomingMessage, res: ServerRespons
     }
     if (url === '/api/v1/actions/gesture' && method === 'POST') {
       return await handleActionGesture(agent, req, res);
+    }
+    if (url === '/api/v1/actions/create-room' && method === 'POST') {
+      return await handleActionCreateRoom(agent, req, res);
+    }
+    if (url === '/api/v1/actions/walk' && method === 'POST') {
+      return await handleActionWalk(agent, req, res);
+    }
+    if (url === '/api/v1/actions/buy' && method === 'POST') {
+      return await handleActionBuy(agent, req, res);
+    }
+    if (url === '/api/v1/actions/place-item' && method === 'POST') {
+      return await handleActionPlaceItem(agent, req, res);
+    }
+    if (url === '/api/v1/actions/pickup-item' && method === 'POST') {
+      return await handleActionPickupItem(agent, req, res);
+    }
+    if (url === '/api/v1/actions/trade' && method === 'POST') {
+      return await handleActionTrade(agent, req, res);
+    }
+    if (url === '/api/v1/actions/look' && method === 'POST') {
+      return await handleActionLook(agent, req, res);
+    }
+    if (url === '/api/v1/actions/motto' && method === 'POST') {
+      return await handleActionMotto(agent, req, res);
     }
 
     sendJSON(res, 404, { error: 'Not found' });
@@ -208,9 +247,27 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse): Promis
   return true;
 }
 
-function handleAgentMe(agent: ExternalAgent, res: ServerResponse): boolean {
-  // Get bot's current room from world state
+async function handleAgentMe(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
   const bot = getBotFromWorld(agent.botId);
+
+  // Fetch credits
+  const creditRows = await query<{ credits: number }>(
+    `SELECT credits FROM users WHERE id = ?`, [agent.userId]
+  );
+  const credits = creditRows[0]?.credits || 0;
+
+  // Fetch inventory count
+  const invRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM items WHERE user_id = ? AND room_id = 0`, [agent.userId]
+  );
+  const inventoryCount = invRows[0]?.cnt || 0;
+
+  // Fetch rooms owned
+  const roomRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM rooms WHERE owner_id = ?`, [agent.userId]
+  );
+  const roomsOwned = roomRows[0]?.cnt || 0;
+
   sendJSON(res, 200, {
     id: agent.id,
     name: agent.name,
@@ -218,6 +275,9 @@ function handleAgentMe(agent: ExternalAgent, res: ServerResponse): boolean {
     description: agent.description,
     status: agent.status,
     current_room_id: bot?.currentRoomId || null,
+    credits,
+    inventory_count: inventoryCount,
+    rooms_owned: roomsOwned,
     request_count: agent.requestCount,
     created_at: agent.createdAt,
   });
@@ -246,6 +306,7 @@ function handleWorldRooms(res: ServerResponse): boolean {
   const rooms = worldRef.rooms.map(r => ({
     id: r.id,
     name: r.name,
+    owner_name: r.ownerName,
     population: r.currentPopulation,
     purpose: r.purpose,
     max_population: r.usersMax,
@@ -278,6 +339,7 @@ function handleWorldRoom(roomId: number, res: ServerResponse): boolean {
   sendJSON(res, 200, {
     id: room.id,
     name: room.name,
+    owner_name: room.ownerName,
     purpose: room.purpose,
     population: room.currentPopulation,
     max_population: room.usersMax,
@@ -304,7 +366,7 @@ function handleWorldAgents(res: ServerResponse): boolean {
   return true;
 }
 
-function handleWorldMe(agent: ExternalAgent, res: ServerResponse): boolean {
+async function handleWorldMe(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
   if (!worldRef) {
     sendJSON(res, 503, { error: 'World not ready' });
     return true;
@@ -332,12 +394,103 @@ function handleWorldMe(agent: ExternalAgent, res: ServerResponse): boolean {
     .slice(-10)
     .map(m => ({ agent: m.agentName, message: m.message, tick: m.tick }));
 
+  // Fetch room items
+  const roomItems = await query<{ id: number; item_id: number; x: number; y: number; rot: number }>(
+    `SELECT id, item_id, x, y, rot FROM items WHERE room_id = ?`, [roomId]
+  );
+
+  // Fetch items that belong to this agent in this room
+  const myItems = await query<{ id: number; item_id: number; x: number; y: number; rot: number }>(
+    `SELECT id, item_id, x, y, rot FROM items WHERE room_id = ? AND user_id = ?`, [roomId, agent.userId]
+  );
+
+  // Build item_id -> name lookup from catalog
+  const catalogMap = new Map(FURNITURE_CATALOG.map(f => [f.itemId, f.name]));
+
   sendJSON(res, 200, {
-    room: room ? { id: room.id, name: room.name, purpose: room.purpose, population: room.currentPopulation } : null,
+    room: room ? {
+      id: room.id,
+      name: room.name,
+      owner_name: room.ownerName,
+      purpose: room.purpose,
+      population: room.currentPopulation,
+      items: roomItems.map(i => ({
+        id: i.id,
+        item_id: i.item_id,
+        name: catalogMap.get(i.item_id) || 'unknown',
+        x: i.x,
+        y: i.y,
+        rotation: i.rot,
+      })),
+    } : null,
     nearby_agents: nearbyAgents,
     recent_chat: recentChat,
+    my_items_here: myItems.map(i => ({
+      id: i.id,
+      item_id: i.item_id,
+      name: catalogMap.get(i.item_id) || 'unknown',
+      x: i.x,
+      y: i.y,
+      rotation: i.rot,
+    })),
     tick: worldRef.tick,
   });
+  return true;
+}
+
+// --- New Perception handlers ---
+
+function handleWorldCatalog(res: ServerResponse): boolean {
+  const items = FURNITURE_CATALOG.map(f => ({
+    id: f.itemId,
+    name: f.name,
+    cost: f.cost,
+  }));
+  sendJSON(res, 200, { items });
+  return true;
+}
+
+async function handleWorldInventory(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{ id: number; item_id: number }>(
+    `SELECT id, item_id FROM items WHERE user_id = ? AND room_id = 0`, [agent.userId]
+  );
+
+  const catalogMap = new Map(FURNITURE_CATALOG.map(f => [f.itemId, f.name]));
+
+  const items = rows.map(r => ({
+    id: r.id,
+    item_id: r.item_id,
+    name: catalogMap.get(r.item_id) || 'unknown',
+  }));
+
+  sendJSON(res, 200, { items });
+  return true;
+}
+
+async function handleWorldRoomItems(agent: ExternalAgent, roomId: number, res: ServerResponse): Promise<boolean> {
+  // Verify room exists
+  const room = worldRef?.rooms.find(r => r.id === roomId);
+  if (!room) {
+    sendJSON(res, 404, { error: 'Room not found' });
+    return true;
+  }
+
+  const rows = await query<{ id: number; item_id: number; x: number; y: number; rot: number }>(
+    `SELECT id, item_id, x, y, rot FROM items WHERE room_id = ?`, [roomId]
+  );
+
+  const catalogMap = new Map(FURNITURE_CATALOG.map(f => [f.itemId, f.name]));
+
+  const items = rows.map(r => ({
+    id: r.id,
+    item_id: r.item_id,
+    name: catalogMap.get(r.item_id) || 'unknown',
+    x: r.x,
+    y: r.y,
+    rotation: r.rot,
+  }));
+
+  sendJSON(res, 200, { items });
   return true;
 }
 
@@ -521,6 +674,474 @@ async function handleActionGesture(agent: ExternalAgent, req: IncomingMessage, r
   }
 
   sendJSON(res, 200, { ok: true, gesture: type });
+  return true;
+}
+
+// --- New Action handlers ---
+
+async function handleActionCreateRoom(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'create_room');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Create room cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { name, description, model } = body;
+
+  if (!name || typeof name !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid name (string)' });
+    return true;
+  }
+  if (name.length > 50) {
+    sendJSON(res, 400, { error: 'Room name too long (max 50 characters)' });
+    return true;
+  }
+
+  const chosenModel = model || 'model_a';
+  if (!MODELS.includes(chosenModel)) {
+    sendJSON(res, 400, { error: `Invalid model. Valid: ${MODELS.join(', ')}` });
+    return true;
+  }
+
+  // Check credits
+  const creditRows = await query<{ credits: number }>(
+    `SELECT credits FROM users WHERE id = ?`, [agent.userId]
+  );
+  const credits = creditRows[0]?.credits || 0;
+  if (credits < CONFIG.ROOM_CREATION_COST) {
+    sendJSON(res, 400, { error: `Not enough credits. Need ${CONFIG.ROOM_CREATION_COST}, have ${credits}` });
+    return true;
+  }
+
+  // Check room limit
+  const roomCountRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM rooms WHERE owner_id = ?`, [agent.userId]
+  );
+  if ((roomCountRows[0]?.cnt || 0) >= CONFIG.MAX_ROOMS_PER_AGENT) {
+    sendJSON(res, 400, { error: `Room limit reached (max ${CONFIG.MAX_ROOMS_PER_AGENT})` });
+    return true;
+  }
+
+  // Get owner username
+  const ownerRows = await query<{ username: string }>(
+    `SELECT username FROM users WHERE id = ?`, [agent.userId]
+  );
+  const ownerName = ownerRows[0]?.username || `ext_${agent.name.toLowerCase()}`;
+
+  // Create room
+  const roomDesc = description || `A room created by ${agent.name}`;
+  const result = await execute(
+    `INSERT INTO rooms (owner_id, owner_name, name, description, model, state, users_max, trade_mode, category)
+     VALUES (?, ?, ?, ?, ?, 'open', 25, 0, 1)`,
+    [agent.userId, ownerName, name, roomDesc, chosenModel]
+  );
+
+  // Create simulation_room_stats record
+  await execute(
+    `INSERT INTO simulation_room_stats (room_id, purpose) VALUES (?, 'hangout')`,
+    [result.insertId]
+  );
+
+  // Deduct credits
+  await execute(
+    `UPDATE users SET credits = credits - ? WHERE id = ?`,
+    [CONFIG.ROOM_CREATION_COST, agent.userId]
+  );
+
+  console.log(`[EXT-API] Agent ${agent.name} created room "${name}" (id=${result.insertId})`);
+
+  sendJSON(res, 201, {
+    ok: true,
+    room: {
+      id: result.insertId,
+      name,
+      description: roomDesc,
+      model: chosenModel,
+    },
+    credits_remaining: credits - CONFIG.ROOM_CREATION_COST,
+  });
+  return true;
+}
+
+async function handleActionWalk(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'walk');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Walk cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { x, y } = body;
+
+  if (typeof x !== 'number' || typeof y !== 'number' || x < 0 || y < 0 || !Number.isInteger(x) || !Number.isInteger(y)) {
+    sendJSON(res, 400, { error: 'x and y must be non-negative integers' });
+    return true;
+  }
+
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  await execute(`UPDATE bots SET x = ?, y = ? WHERE id = ?`, [x, y, agent.botId]);
+
+  sendJSON(res, 200, { ok: true, x, y });
+  return true;
+}
+
+async function handleActionBuy(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'buy');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Buy cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { itemId } = body;
+
+  if (typeof itemId !== 'number') {
+    sendJSON(res, 400, { error: 'Missing or invalid itemId (number)' });
+    return true;
+  }
+
+  // Validate item exists in catalog
+  const catalogItem = FURNITURE_CATALOG.find(f => f.itemId === itemId);
+  if (!catalogItem) {
+    sendJSON(res, 400, { error: `Item ${itemId} not found in catalog. Use GET /api/v1/world/catalog to see available items.` });
+    return true;
+  }
+
+  // Check credits
+  const creditRows = await query<{ credits: number }>(
+    `SELECT credits FROM users WHERE id = ?`, [agent.userId]
+  );
+  const credits = creditRows[0]?.credits || 0;
+  if (credits < catalogItem.cost) {
+    sendJSON(res, 400, { error: `Not enough credits. Need ${catalogItem.cost}, have ${credits}` });
+    return true;
+  }
+
+  // Check inventory cap
+  const invRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM items WHERE user_id = ? AND room_id = 0`, [agent.userId]
+  );
+  if ((invRows[0]?.cnt || 0) >= CONFIG.MAX_INVENTORY_ITEMS) {
+    sendJSON(res, 400, { error: `Inventory full (max ${CONFIG.MAX_INVENTORY_ITEMS}). Place or trade items first.` });
+    return true;
+  }
+
+  // Insert item into inventory
+  const itemResult = await execute(
+    `INSERT INTO items (user_id, room_id, item_id, x, y, z, rot, extra_data)
+     VALUES (?, 0, ?, 0, 0, 0, 0, '0')`,
+    [agent.userId, catalogItem.itemId]
+  );
+
+  // Deduct credits
+  await execute(
+    `UPDATE users SET credits = credits - ? WHERE id = ?`,
+    [catalogItem.cost, agent.userId]
+  );
+
+  sendJSON(res, 200, {
+    ok: true,
+    item: {
+      id: itemResult.insertId,
+      item_id: catalogItem.itemId,
+      name: catalogItem.name,
+      cost: catalogItem.cost,
+    },
+    credits_remaining: credits - catalogItem.cost,
+  });
+  return true;
+}
+
+async function handleActionPlaceItem(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'place_item');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Place item cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { itemId, x, y, rotation } = body;
+
+  if (typeof itemId !== 'number') {
+    sendJSON(res, 400, { error: 'Missing or invalid itemId (number)' });
+    return true;
+  }
+  if (typeof x !== 'number' || typeof y !== 'number' || x < 0 || y < 0 || !Number.isInteger(x) || !Number.isInteger(y)) {
+    sendJSON(res, 400, { error: 'x and y must be non-negative integers' });
+    return true;
+  }
+  const rot = typeof rotation === 'number' ? rotation : 0;
+
+  // Check agent is in a room
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  // Verify agent owns the room
+  const roomRows = await query<{ owner_id: number }>(
+    `SELECT owner_id FROM rooms WHERE id = ?`, [bot.currentRoomId]
+  );
+  if (!roomRows.length || roomRows[0].owner_id !== agent.userId) {
+    sendJSON(res, 403, { error: 'You can only place items in rooms you own' });
+    return true;
+  }
+
+  // Verify agent owns the item and it's in inventory (room_id = 0)
+  const itemRows = await query<{ id: number; user_id: number; room_id: number }>(
+    `SELECT id, user_id, room_id FROM items WHERE id = ?`, [itemId]
+  );
+  if (!itemRows.length) {
+    sendJSON(res, 404, { error: 'Item not found' });
+    return true;
+  }
+  if (itemRows[0].user_id !== agent.userId) {
+    sendJSON(res, 403, { error: 'You do not own this item' });
+    return true;
+  }
+  if (itemRows[0].room_id !== 0) {
+    sendJSON(res, 400, { error: 'Item is not in your inventory (already placed in a room)' });
+    return true;
+  }
+
+  // Place item
+  await execute(
+    `UPDATE items SET room_id = ?, x = ?, y = ?, rot = ? WHERE id = ?`,
+    [bot.currentRoomId, x, y, rot, itemId]
+  );
+
+  sendJSON(res, 200, { ok: true, itemId, room_id: bot.currentRoomId, x, y, rotation: rot });
+  return true;
+}
+
+async function handleActionPickupItem(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'pickup_item');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Pickup item cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { itemId } = body;
+
+  if (typeof itemId !== 'number') {
+    sendJSON(res, 400, { error: 'Missing or invalid itemId (number)' });
+    return true;
+  }
+
+  // Check agent is in a room
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  // Verify agent owns the room
+  const roomRows = await query<{ owner_id: number }>(
+    `SELECT owner_id FROM rooms WHERE id = ?`, [bot.currentRoomId]
+  );
+  if (!roomRows.length || roomRows[0].owner_id !== agent.userId) {
+    sendJSON(res, 403, { error: 'You can only pick up items in rooms you own' });
+    return true;
+  }
+
+  // Verify the item is in this room
+  const itemRows = await query<{ id: number; user_id: number; room_id: number }>(
+    `SELECT id, user_id, room_id FROM items WHERE id = ?`, [itemId]
+  );
+  if (!itemRows.length) {
+    sendJSON(res, 404, { error: 'Item not found' });
+    return true;
+  }
+  if (itemRows[0].room_id !== bot.currentRoomId) {
+    sendJSON(res, 400, { error: 'Item is not in your current room' });
+    return true;
+  }
+
+  // Pick up item (move to inventory)
+  await execute(
+    `UPDATE items SET room_id = 0, x = 0, y = 0, rot = 0 WHERE id = ?`,
+    [itemId]
+  );
+
+  sendJSON(res, 200, { ok: true, itemId });
+  return true;
+}
+
+async function handleActionTrade(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'trade');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Trade cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { targetAgentName, offerItemIds, offerCredits, requestCredits } = body;
+
+  if (!targetAgentName || typeof targetAgentName !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid targetAgentName (string)' });
+    return true;
+  }
+
+  const hasItemOffer = Array.isArray(offerItemIds) && offerItemIds.length > 0;
+  const hasCreditOffer = typeof offerCredits === 'number' && offerCredits > 0;
+  const hasCreditRequest = typeof requestCredits === 'number' && requestCredits > 0;
+
+  if (!hasItemOffer && !hasCreditOffer && !hasCreditRequest) {
+    sendJSON(res, 400, { error: 'Must provide at least one of: offerItemIds, offerCredits, requestCredits' });
+    return true;
+  }
+
+  // Check agent is in a room
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  // Find target bot by name
+  const targetBot = worldRef?.agents.find(a => a.name === targetAgentName);
+  if (!targetBot) {
+    sendJSON(res, 404, { error: `Agent "${targetAgentName}" not found` });
+    return true;
+  }
+
+  // Verify same room
+  if (targetBot.currentRoomId !== bot.currentRoomId) {
+    sendJSON(res, 400, { error: `Agent "${targetAgentName}" is not in the same room` });
+    return true;
+  }
+
+  // Get target user_id from bots table
+  const targetBotRows = await query<{ user_id: number }>(
+    `SELECT user_id FROM bots WHERE id = ?`, [targetBot.id]
+  );
+  if (!targetBotRows.length) {
+    sendJSON(res, 404, { error: 'Target agent bot not found in database' });
+    return true;
+  }
+  const targetUserId = targetBotRows[0].user_id;
+
+  // Execute trade atomically
+  try {
+    await withTransaction(async (conn) => {
+      // Validate and transfer items
+      if (hasItemOffer) {
+        for (const offeredItemId of offerItemIds) {
+          const [rows] = await conn.execute(
+            `SELECT id, user_id, room_id FROM items WHERE id = ? FOR UPDATE`,
+            [offeredItemId]
+          );
+          const items = rows as any[];
+          if (!items.length) throw new Error(`Item ${offeredItemId} not found`);
+          if (items[0].user_id !== agent.userId) throw new Error(`You don't own item ${offeredItemId}`);
+          if (items[0].room_id !== 0) throw new Error(`Item ${offeredItemId} is not in your inventory`);
+
+          await conn.execute(
+            `UPDATE items SET user_id = ? WHERE id = ?`,
+            [targetUserId, offeredItemId]
+          );
+        }
+      }
+
+      // Handle credit transfers
+      if (hasCreditOffer) {
+        const [rows] = await conn.execute(
+          `SELECT credits FROM users WHERE id = ? FOR UPDATE`, [agent.userId]
+        );
+        const agentCredits = (rows as any[])[0]?.credits || 0;
+        if (agentCredits < offerCredits) throw new Error(`Not enough credits. Have ${agentCredits}, offering ${offerCredits}`);
+
+        await conn.execute(`UPDATE users SET credits = credits - ? WHERE id = ?`, [offerCredits, agent.userId]);
+        await conn.execute(`UPDATE users SET credits = credits + ? WHERE id = ?`, [offerCredits, targetUserId]);
+      }
+
+      if (hasCreditRequest) {
+        const [rows] = await conn.execute(
+          `SELECT credits FROM users WHERE id = ? FOR UPDATE`, [targetUserId]
+        );
+        const targetCredits = (rows as any[])[0]?.credits || 0;
+        if (targetCredits < requestCredits) throw new Error(`Target doesn't have enough credits (${targetCredits} < ${requestCredits})`);
+
+        await conn.execute(`UPDATE users SET credits = credits - ? WHERE id = ?`, [requestCredits, targetUserId]);
+        await conn.execute(`UPDATE users SET credits = credits + ? WHERE id = ?`, [requestCredits, agent.userId]);
+      }
+    });
+  } catch (err: any) {
+    sendJSON(res, 400, { error: `Trade failed: ${err.message}` });
+    return true;
+  }
+
+  sendJSON(res, 200, {
+    ok: true,
+    trade: {
+      target: targetAgentName,
+      items_given: offerItemIds || [],
+      credits_given: offerCredits || 0,
+      credits_received: requestCredits || 0,
+    },
+  });
+  return true;
+}
+
+async function handleActionLook(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'look');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Look cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { figure } = body;
+
+  if (!figure || typeof figure !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid figure (string)' });
+    return true;
+  }
+  if (figure.length > 500) {
+    sendJSON(res, 400, { error: 'Figure string too long (max 500 characters)' });
+    return true;
+  }
+  if (!FIGURE_REGEX.test(figure)) {
+    sendJSON(res, 400, { error: 'Invalid figure format. Expected: partType-partId-colorId.partType-partId-colorId... (e.g. hr-115-42.hd-195-19.ch-3030-82.lg-275-1408)' });
+    return true;
+  }
+
+  await execute(`UPDATE bots SET figure = ? WHERE id = ?`, [figure, agent.botId]);
+
+  sendJSON(res, 200, { ok: true, figure });
+  return true;
+}
+
+async function handleActionMotto(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'motto');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Motto cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { motto } = body;
+
+  if (typeof motto !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid motto (string)' });
+    return true;
+  }
+  if (motto.length > 127) {
+    sendJSON(res, 400, { error: 'Motto too long (max 127 characters)' });
+    return true;
+  }
+
+  await execute(`UPDATE bots SET motto = ? WHERE id = ?`, [motto, agent.botId]);
+
+  sendJSON(res, 200, { ok: true, motto });
   return true;
 }
 

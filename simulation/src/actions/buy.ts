@@ -6,7 +6,7 @@ import { completeGoal } from '../engine/goals.js';
 import type { Agent, WorldState } from '../types.js';
 
 // Real furniture from items_base (type='s' floor items)
-const FURNITURE_CATALOG = [
+export const FURNITURE_CATALOG = [
   { itemId: 18, name: 'chair', cost: 25 },       // chair_polyfon
   { itemId: 30, name: 'chair', cost: 25 },        // chair_norja
   { itemId: 39, name: 'chair', cost: 20 },        // chair_plasto

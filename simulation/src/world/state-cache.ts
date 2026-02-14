@@ -101,7 +101,7 @@ export async function refreshCache(): Promise<void> {
   const rooms = await query<RoomRow>(
     `SELECT r.id, r.name, r.owner_id, r.owner_name, r.model, r.users_max, r.trade_mode
      FROM rooms r JOIN users u ON r.owner_id = u.id
-     WHERE u.username LIKE 'sim_owner_%' ORDER BY r.id`
+     WHERE u.username LIKE 'sim_owner_%' OR u.username LIKE 'ext_%' ORDER BY r.id`
   );
 
   const roomStats = await query<{ room_id: number; purpose: string }>(

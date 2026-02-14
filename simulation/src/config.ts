@@ -116,6 +116,9 @@ export const CONFIG = {
 
   // External agent API
   MAX_EXTERNAL_AGENTS: 50,
+
+  // Test agents (dev mode)
+  TEST_AGENT_COUNT: parseInt(process.env.TEST_AGENTS || '0'),
 } as const;
 
 // Job type definitions

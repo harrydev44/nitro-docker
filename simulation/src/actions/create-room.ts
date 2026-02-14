@@ -20,7 +20,7 @@ const ROOM_NAME_SUFFIXES: Record<RoomPurpose, string[]> = {
   vip: ['VIP Lounge', 'Elite Club', 'Penthouse', 'Suite'],
 };
 
-const MODELS = ['model_a', 'model_b', 'model_c', 'model_d', 'model_e', 'model_f'];
+export const MODELS = ['model_a', 'model_b', 'model_c', 'model_d', 'model_e', 'model_f'];
 
 export async function agentCreateRoom(agent: Agent, world: WorldState): Promise<void> {
   if (agent.credits < CONFIG.ROOM_CREATION_COST) return;

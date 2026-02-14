@@ -16,6 +16,7 @@ import { shouldGesture, pickGesture } from './chat/gesture-triggers.js';
 import { refreshFame, getFameList } from './world/reputation.js';
 import { refreshCliques } from './world/cliques.js';
 import { getDayPeriod } from './world/day-cycle.js';
+import { startTestAgents } from './test-agents/runner.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -115,6 +116,19 @@ async function tick(world: WorldState): Promise<void> {
       `UPDATE users SET auth_ticket = ? WHERE username = 'sim_spectator'`,
       [SPECTATOR_SSO_TICKET]
     );
+  }
+
+  // Sync bot population to rooms.users so Navigator shows correct counts
+  if (currentTick % 5 === 0) {
+    try {
+      await execute(`UPDATE rooms SET users = 0 WHERE users > 0`);
+      await execute(
+        `UPDATE rooms r
+         JOIN (SELECT room_id, COUNT(*) as cnt FROM bots WHERE room_id > 0 GROUP BY room_id) b
+         ON r.id = b.room_id
+         SET r.users = b.cnt`
+      );
+    } catch {}
   }
 
   // Periodic tasks
@@ -269,6 +283,11 @@ async function main(): Promise<void> {
   };
 
   tickLoop();
+
+  // Start test agents if enabled
+  if (CONFIG.TEST_AGENT_COUNT > 0) {
+    startTestAgents(CONFIG.TEST_AGENT_COUNT);
+  }
 
   // Graceful shutdown
   process.on('SIGINT', async () => {

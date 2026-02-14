@@ -15,6 +15,14 @@ const ACTION_COOLDOWNS: Record<string, number> = {
   shout: 30,
   dance: 5,
   gesture: 5,
+  create_room: 60,
+  walk: 2,
+  buy: 5,
+  place_item: 3,
+  pickup_item: 3,
+  trade: 15,
+  look: 30,
+  motto: 30,
 };
 
 const GLOBAL_LIMIT = 60;          // requests per minute
