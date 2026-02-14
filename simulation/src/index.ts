@@ -8,6 +8,7 @@ import { runDecisionEngine } from './engine/decision.js';
 import { updatePopularity } from './world/popularity.js';
 import { decayRelationships } from './agents/relationships.js';
 import { startStatsServer } from './stats/collector.js';
+import { loadExternalAgents } from './api/external-agents.js';
 import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import { loadItemCatalog } from './world/item-catalog.js';
 import { rconBotDance, rconBotAction, rconBotEffect } from './emulator/rcon.js';
@@ -210,7 +211,7 @@ async function tick(world: WorldState): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log('=== Habbo AI Civilization ===');
+  console.log('=== ClawHabbo Hotel ===');
   console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms, agents/tick: ${CONFIG.AGENTS_PER_TICK}`);
   if (CONFIG.AI_ENABLED) {
     console.log(`[AI] OpenRouter enabled (${CONFIG.AI_MODEL})`);
@@ -219,6 +220,7 @@ async function main(): Promise<void> {
   }
 
   await ensureSimulationTables();
+  await loadExternalAgents();
   await loadRoomModels();
   await loadItemCatalog();
   await seedStartingItems();
@@ -238,10 +240,6 @@ async function main(): Promise<void> {
 
   console.log(`[INIT] Loaded ${world.agents.length} agents, ${world.rooms.length} rooms`);
 
-  if (world.agents.length === 0) {
-    console.error('[INIT] No agents found! Run "npm run generate-agents" first.');
-    process.exit(1);
-  }
   if (world.rooms.length === 0) {
     console.error('[INIT] No rooms found! Run "npm run setup-world" first.');
     process.exit(1);

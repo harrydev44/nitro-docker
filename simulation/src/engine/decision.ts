@@ -9,11 +9,14 @@ import { agentCreateRoom } from '../actions/create-room.js';
 import { executeDrama } from '../actions/drama.js';
 import { hostParty } from '../actions/host-party.js';
 import { getCachedFriends, getCachedEnemies, getCachedInventoryCount, getCachedRelationship, getCachedRoomItemCount } from '../world/state-cache.js';
+import { isExternalBot } from '../api/external-agents.js';
 import { generateGoals, pruneExpiredGoals } from './goals.js';
 import { getTimeMultiplier } from '../world/day-cycle.js';
 import type { Agent, WorldState, ActionScore } from '../types.js';
 
 export async function runDecisionEngine(agent: Agent, world: WorldState): Promise<void> {
+  // Skip external agents — they act only through the API
+  if (isExternalBot(agent.id)) return;
   // Prune expired goals and potentially generate new ones
   pruneExpiredGoals(agent, world.tick);
   if (agent.goals.length < CONFIG.MAX_GOALS_PER_AGENT && Math.random() < 0.02) {

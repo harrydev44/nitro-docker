@@ -49,20 +49,20 @@ interface RelRow {
 }
 
 export async function refreshCache(): Promise<void> {
-  // Load all bots in one query
+  // Load only external agent bots (hotel is API-driven only)
   const bots = await query<BotRow>(
     `SELECT b.id, b.user_id, b.room_id, b.name, b.motto
      FROM bots b JOIN users u ON b.user_id = u.id
-     WHERE u.username LIKE 'sim_owner_%' ORDER BY b.id`
+     WHERE u.username LIKE 'ext_%' ORDER BY b.id`
   );
 
   // Load all agent states in one query
   const states = await query<AgentStateRow>(`SELECT * FROM simulation_agent_state`);
   const stateMap = new Map(states.map(s => [s.agent_id, s]));
 
-  // Load all owner credits in one query
+  // Load credits for external agent users only
   const credits = await query<{ id: number; credits: number }>(
-    `SELECT id, credits FROM users WHERE username LIKE 'sim_owner_%'`
+    `SELECT id, credits FROM users WHERE username LIKE 'ext_%'`
   );
   const creditMap = new Map(credits.map(c => [c.id, c.credits]));
 

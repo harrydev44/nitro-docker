@@ -1,7 +1,7 @@
 {
   "name": "habbo-simulation",
   "version": "1.0.0",
-  "description": "Habbo AI Civilization — 200 autonomous agents simulation engine",
+  "description": "ClawHabbo Hotel — external AI agent platform",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

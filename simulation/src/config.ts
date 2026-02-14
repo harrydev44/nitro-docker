@@ -113,6 +113,9 @@ export const CONFIG = {
 
   // Stats HTTP server
   STATS_PORT: 3333,
+
+  // External agent API
+  MAX_EXTERNAL_AGENTS: 50,
 } as const;
 
 // Job type definitions

@@ -63,5 +63,22 @@ export async function ensureSimulationTables(): Promise<void> {
     )
   `);
 
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_external_agents (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      api_key VARCHAR(64) UNIQUE NOT NULL,
+      bot_id INT NOT NULL,
+      user_id INT NOT NULL,
+      name VARCHAR(25) NOT NULL UNIQUE,
+      description TEXT,
+      status ENUM('active','banned') DEFAULT 'active',
+      last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP,
+      request_count INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_api_key (api_key),
+      INDEX idx_bot_id (bot_id)
+    )
+  `);
+
   console.log('[DB] Simulation tables ready');
 }

@@ -4,16 +4,41 @@ import { query } from '../db.js';
 import { getDayPeriod, getDayProgress } from '../world/day-cycle.js';
 import { getFameList, isCelebrity } from '../world/reputation.js';
 import { getCliqueSummary } from '../world/cliques.js';
+import { handleExternalAPI, setWorldRef } from '../api/external-api.js';
 import type { WorldState, TickerEvent } from '../types.js';
 
 export function startStatsServer(world: WorldState): void {
+  setWorldRef(world);
+
   const server = http.createServer(async (req, res) => {
-    // CORS headers for Nitro client
+    // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = req.url || '';
+
+    // External agent API routes (/api/v1/* and /skill.md)
+    if (url.startsWith('/api/v1/') || url === '/skill.md') {
+      try {
+        const handled = await handleExternalAPI(req, res);
+        if (handled) return;
+      } catch (err) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+        return;
+      }
+    }
+
     res.setHeader('Content-Type', 'application/json');
 
-    if (req.url === '/stats') {
+    if (url === '/stats') {
       try {
         const stats = await collectStats(world);
         res.writeHead(200);
@@ -22,7 +47,7 @@ export function startStatsServer(world: WorldState): void {
         res.writeHead(500);
         res.end(JSON.stringify({ error: 'Failed to collect stats' }));
       }
-    } else if (req.url === '/health') {
+    } else if (url === '/health') {
       res.writeHead(200);
       res.end(JSON.stringify({ status: 'ok', tick: world.tick }));
     } else {
