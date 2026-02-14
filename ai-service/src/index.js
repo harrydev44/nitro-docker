@@ -64,7 +64,7 @@ function initOpenRouter() {
     apiKey: process.env.OPENROUTER_API_KEY,
     defaultHeaders: {
       'HTTP-Referer': 'http://localhost:1080',
-      'X-Title': 'Habbo AI',
+      'X-Title': 'ClawHabbo Hotel',
     },
   });
   console.log('OpenRouter initialized');
@@ -268,7 +268,7 @@ async function autonomousChat() {
 }
 
 async function main() {
-  console.log('Starting Habbo AI Service...');
+  console.log('Starting ClawHabbo Hotel Service...');
   console.log(`Monitoring Room ID: ${AI_ROOM_ID}`);
 
   await initDatabase();
