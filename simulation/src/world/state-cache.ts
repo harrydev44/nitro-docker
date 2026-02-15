@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { CONFIG } from '../config.js';
 import type { Agent, SimRoom, Relationship, PersonalityTraits, AgentPreferences, RoomPurpose, CachedMemory } from '../types.js';
 
 // In-memory caches loaded once per tick
@@ -18,6 +19,13 @@ interface BotRow {
   room_id: number;
   name: string;
   motto: string;
+}
+
+interface WSUserRow {
+  id: number;
+  real_name: string;
+  motto: string;
+  credits: number;
 }
 
 interface AgentStateRow {
@@ -49,7 +57,112 @@ interface RelRow {
 }
 
 export async function refreshCache(): Promise<void> {
-  // Load only external agent bots (hotel is API-driven only)
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    await refreshWSAgentCache();
+  } else {
+    await refreshBotAgentCache();
+  }
+
+  await refreshRoomCache();
+  await refreshRelationshipCache();
+  await refreshItemCaches();
+  await refreshMemoryCache();
+}
+
+/**
+ * WS mode: Load agents from users table (sim_agent_* users).
+ * Room tracking comes from the ClientPool, not DB.
+ */
+async function refreshWSAgentCache(): Promise<void> {
+  const limit = CONFIG.TEST_AGENT_COUNT > 0 ? CONFIG.TEST_AGENT_COUNT : 0;
+  const users = await query<WSUserRow>(
+    `SELECT id, real_name, motto, credits FROM users WHERE username LIKE 'sim_agent_%' ORDER BY id${limit ? ` LIMIT ${limit}` : ''}`
+  );
+
+  // Load all agent states in one query
+  const states = await query<AgentStateRow>(`SELECT * FROM simulation_agent_state`);
+  const stateMap = new Map(states.map(s => [s.agent_id, s]));
+
+  // Also load external bots (these still run as bots)
+  const extBots = await query<BotRow>(
+    `SELECT b.id, b.user_id, b.room_id, b.name, b.motto
+     FROM bots b JOIN users u ON b.user_id = u.id
+     WHERE u.username LIKE 'ext_%' ORDER BY b.id`
+  );
+  const extCredits = await query<{ id: number; credits: number }>(
+    `SELECT id, credits FROM users WHERE username LIKE 'ext_%'`
+  );
+  const extCreditMap = new Map(extCredits.map(c => [c.id, c.credits]));
+
+  // Build agent cache from WS users
+  const wsAgents: Agent[] = users.map(user => {
+    const state = stateMap.get(user.id);
+    const defaultPersonality: PersonalityTraits = {
+      sociability: 0.5, ambition: 0.5, curiosity: 0.5, friendliness: 0.5, impulsiveness: 0.5,
+    };
+    const defaultPreferences: AgentPreferences = {
+      preferredRoomTypes: ['hangout'],
+      socialCircleSize: 5,
+      wealthGoal: 3000,
+    };
+    const moltbookUrl = user.motto?.startsWith('moltbook.com/u/')
+      ? `https://www.${user.motto}`
+      : undefined;
+    return {
+      id: user.id,
+      userId: user.id,
+      name: user.real_name,
+      personality: state ? JSON.parse(state.personality) : defaultPersonality,
+      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
+      goals: state ? JSON.parse(state.goals) : [],
+      currentRoomId: null, // Set by pool sync in index.ts
+      credits: user.credits,
+      state: (state?.state as Agent['state']) || 'idle',
+      ticksSinceLastAction: 0,
+      ticksInCurrentRoom: state?.ticks_in_room || 0,
+      ticksWorking: state?.ticks_working || 0,
+      moltbookUrl,
+    };
+  });
+
+  // Add external bot agents
+  const extAgents: Agent[] = extBots.map(bot => {
+    const state = stateMap.get(bot.id);
+    const defaultPersonality: PersonalityTraits = {
+      sociability: 0.5, ambition: 0.5, curiosity: 0.5, friendliness: 0.5, impulsiveness: 0.5,
+    };
+    const defaultPreferences: AgentPreferences = {
+      preferredRoomTypes: ['hangout'],
+      socialCircleSize: 5,
+      wealthGoal: 3000,
+    };
+    const moltbookUrl = bot.motto?.startsWith('moltbook.com/u/')
+      ? `https://www.${bot.motto}`
+      : undefined;
+    return {
+      id: bot.id,
+      userId: bot.user_id,
+      name: bot.name,
+      personality: state ? JSON.parse(state.personality) : defaultPersonality,
+      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
+      goals: state ? JSON.parse(state.goals) : [],
+      currentRoomId: bot.room_id || null,
+      credits: extCreditMap.get(bot.user_id) || 0,
+      state: (state?.state as Agent['state']) || 'idle',
+      ticksSinceLastAction: 0,
+      ticksInCurrentRoom: state?.ticks_in_room || 0,
+      ticksWorking: state?.ticks_working || 0,
+      moltbookUrl,
+    };
+  });
+
+  agentCache = [...wsAgents, ...extAgents];
+}
+
+/**
+ * Bot mode: Load agents from bots table (external agents only now).
+ */
+async function refreshBotAgentCache(): Promise<void> {
   const bots = await query<BotRow>(
     `SELECT b.id, b.user_id, b.room_id, b.name, b.motto
      FROM bots b JOIN users u ON b.user_id = u.id
@@ -96,12 +209,18 @@ export async function refreshCache(): Promise<void> {
       moltbookUrl,
     };
   });
+}
 
-  // Load all rooms in one query
+async function refreshRoomCache(): Promise<void> {
+  // Load all rooms in one query — include sim_agent_* rooms in WS mode
+  const ownerPattern = CONFIG.USE_WEBSOCKET_AGENTS
+    ? `u.username LIKE 'sim_owner_%' OR u.username LIKE 'sim_agent_%' OR u.username LIKE 'ext_%'`
+    : `u.username LIKE 'sim_owner_%' OR u.username LIKE 'ext_%'`;
+
   const rooms = await query<RoomRow>(
     `SELECT r.id, r.name, r.owner_id, r.owner_name, r.model, r.users_max, r.trade_mode
      FROM rooms r JOIN users u ON r.owner_id = u.id
-     WHERE u.username LIKE 'sim_owner_%' OR u.username LIKE 'ext_%' ORDER BY r.id`
+     WHERE ${ownerPattern} ORDER BY r.id`
   );
 
   const roomStats = await query<{ room_id: number; purpose: string }>(
@@ -128,7 +247,9 @@ export async function refreshCache(): Promise<void> {
     usersMax: r.users_max,
     tradeMode: r.trade_mode,
   }));
+}
 
+async function refreshRelationshipCache(): Promise<void> {
   // Load all relationships in one query
   const rels = await query<RelRow>(`SELECT * FROM simulation_relationships`);
   relationshipCache.clear();
@@ -160,7 +281,9 @@ export async function refreshCache(): Promise<void> {
       enemiesCache.get(rel.agent_id)!.push(rel.target_agent_id);
     }
   }
+}
 
+async function refreshItemCaches(): Promise<void> {
   // Load item counts per user (inventory) and per room
   const invItems = await query<{ user_id: number; cnt: number }>(
     `SELECT user_id, COUNT(*) as cnt FROM items WHERE room_id = 0 GROUP BY user_id`
@@ -171,7 +294,9 @@ export async function refreshCache(): Promise<void> {
     `SELECT room_id, COUNT(*) as cnt FROM items WHERE room_id > 0 GROUP BY room_id`
   );
   roomItemCountCache = new Map(roomItems.map(i => [i.room_id, i.cnt]));
+}
 
+async function refreshMemoryCache(): Promise<void> {
   // Load recent memories for gossip (last 5 minutes, capped at 500)
   const recentMems = await query<{ agent_id: number; target_agent_id: number | null; event_type: string; summary: string }>(
     `SELECT agent_id, target_agent_id, event_type, summary

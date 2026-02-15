@@ -1,7 +1,7 @@
 import { CONFIG } from '../config.js';
 import { getCachedFriends, getCachedEnemies, getCachedCloseFriends } from '../world/state-cache.js';
 import { queueBotMove, queueBotChat } from '../world/batch-writer.js';
-import { rconBotDance, rconBotAction } from '../emulator/rcon.js';
+import { botDance, botAction } from '../emulator/actions.js';
 import { getRandomFreeTile } from '../world/room-models.js';
 import { getHomeRoomEnterChat, getHomeRoomWelcomeChat } from '../chat/announcements.js';
 import { getPartyArrival } from '../chat/party-templates.js';
@@ -68,7 +68,7 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
     );
     if (friendsInRoom.length > 0 && shouldGesture('enter_room')) {
       const g = pickGesture('enter_room');
-      if (g) rconBotAction(agent.id, g).catch(() => {});
+      if (g) botAction(agent.id, g).catch(() => {});
     }
   }
 
@@ -77,14 +77,14 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
   if (party) {
     party.attendees.add(agent.id);
     const danceId = Math.floor(Math.random() * 4) + 1;
-    rconBotDance(agent.id, danceId).catch(() => {});
+    botDance(agent.id, danceId).catch(() => {});
     if (Math.random() < 0.5) {
       queueBotChat(agent.id, getPartyArrival(), CONFIG.MIN_CHAT_DELAY);
     }
     // Party arrival gesture (wave/jump)
     if (CONFIG.GESTURE_ENABLED && shouldGesture('party_arrive')) {
       const g = pickGesture('party_arrive');
-      if (g) rconBotAction(agent.id, g).catch(() => {});
+      if (g) botAction(agent.id, g).catch(() => {});
     }
   }
 
@@ -118,7 +118,7 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
       const celeb = celebsInRoom[Math.floor(Math.random() * celebsInRoom.length)];
       queueBotChat(agent.id, getCelebrityReaction(celeb.name), CONFIG.MIN_CHAT_DELAY);
       if (CONFIG.GESTURE_ENABLED) {
-        rconBotAction(agent.id, ACTION.WAVE).catch(() => {});
+        botAction(agent.id, ACTION.WAVE).catch(() => {});
       }
       world.tickerEvents.push({
         type: 'celebrity_spotted',
@@ -140,8 +140,8 @@ export async function moveAgent(agent: Agent, world: WorldState): Promise<void> 
       queueBotChat(agent.id, getFriendReunionChat(friend.name), CONFIG.MIN_CHAT_DELAY, bubble);
       queueBotChat(friend.id, getFriendReunionResponse(), CONFIG.MIN_CHAT_DELAY + 4, bubble);
       if (CONFIG.GESTURE_ENABLED) {
-        rconBotAction(agent.id, ACTION.WAVE).catch(() => {});
-        rconBotAction(friend.id, ACTION.BLOW_KISS).catch(() => {});
+        botAction(agent.id, ACTION.WAVE).catch(() => {});
+        botAction(friend.id, ACTION.BLOW_KISS).catch(() => {});
       }
       world.tickerEvents.push({
         type: 'friend_reunion',

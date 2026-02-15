@@ -5,6 +5,87 @@ import { generateFigure, generateGender } from './figures.js';
 import { generatePersonality, generatePreferences, generateInitialCredits } from './personalities.js';
 
 export async function generateAllAgents(): Promise<void> {
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    return generateWSAgents();
+  }
+  return generateBotAgents();
+}
+
+/**
+ * WebSocket mode: Create real user accounts (sim_agent_*) instead of bots.
+ * Each agent has its own user row with credits, look, etc.
+ */
+async function generateWSAgents(): Promise<void> {
+  console.log(`[GEN] Generating ${CONFIG.AGENT_COUNT} WebSocket agents as real users...`);
+
+  const names = AGENT_NAMES.slice(0, CONFIG.AGENT_COUNT);
+  let created = 0;
+
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const username = `sim_agent_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+
+    // Check if user already exists
+    const existing = await query<{ id: number }>(
+      `SELECT id FROM users WHERE username = ?`, [username]
+    );
+    if (existing.length > 0) {
+      await ensureAgentState(existing[0].id);
+      continue;
+    }
+
+    const figure = generateFigure();
+    const gender = generateGender();
+    const moltAgent = MOLTBOOK_AGENTS[i];
+    const personality = moltAgent?.personality ?? generatePersonality();
+    const preferences = generatePreferences(personality);
+    const motto = moltAgent ? `moltbook.com/u/${moltAgent.name}` : 'AI Agent';
+    const credits = Math.floor(
+      CONFIG.INITIAL_CREDITS_MIN + Math.random() * (CONFIG.INITIAL_CREDITS_MAX - CONFIG.INITIAL_CREDITS_MIN)
+    );
+
+    const result = await execute(
+      `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+       VALUES (?, ?, 'simulation', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), ?, ?, ?, 1, ?, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
+      [username, name, motto, figure, gender, credits]
+    );
+
+    // Create agent state record (agent_id = user id)
+    // Use REPLACE to handle collisions with old bot-mode state records
+    await execute(
+      `REPLACE INTO simulation_agent_state (agent_id, personality, preferences, goals, state)
+       VALUES (?, ?, ?, '[]', 'idle')`,
+      [result.insertId, JSON.stringify(personality), JSON.stringify(preferences)]
+    );
+
+    created++;
+    if (created % 25 === 0) {
+      console.log(`  Created ${created}/${names.length} agents...`);
+    }
+  }
+
+  // Also create owner users (still needed for rooms)
+  for (let i = 1; i <= CONFIG.OWNER_COUNT; i++) {
+    const username = `sim_owner_${i}`;
+    const existing = await query<{ id: number }>(
+      `SELECT id FROM users WHERE username = ?`, [username]
+    );
+    if (existing.length === 0) {
+      await execute(
+        `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+         VALUES (?, ?, 'simulation', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'Simulation Owner', 'hr-115-42.hd-195-19.ch-3030-82.lg-275-1408', 'M', 7, 50000, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
+        [username, username]
+      );
+    }
+  }
+
+  console.log(`[GEN] Done! Created ${created} new WS agents (${names.length} total expected)`);
+}
+
+/**
+ * Original bot mode: Create bots owned by sim_owner_* users.
+ */
+async function generateBotAgents(): Promise<void> {
   console.log(`[GEN] Generating ${CONFIG.AGENT_COUNT} agents across ${CONFIG.OWNER_COUNT} owners...`);
 
   // 1. Create owner users
@@ -92,9 +173,9 @@ export async function generateAllAgents(): Promise<void> {
   console.log(`[GEN] Done! Created ${created} new agents (${names.length} total expected)`);
 }
 
-async function ensureAgentState(botId: number): Promise<void> {
+async function ensureAgentState(agentId: number): Promise<void> {
   const existing = await query<{ agent_id: number }>(
-    `SELECT agent_id FROM simulation_agent_state WHERE agent_id = ?`, [botId]
+    `SELECT agent_id FROM simulation_agent_state WHERE agent_id = ?`, [agentId]
   );
   if (existing.length === 0) {
     const personality = generatePersonality();
@@ -102,7 +183,7 @@ async function ensureAgentState(botId: number): Promise<void> {
     await execute(
       `INSERT INTO simulation_agent_state (agent_id, personality, preferences, goals, state)
        VALUES (?, ?, ?, '[]', 'idle')`,
-      [botId, JSON.stringify(personality), JSON.stringify(preferences)]
+      [agentId, JSON.stringify(personality), JSON.stringify(preferences)]
     );
   }
 }

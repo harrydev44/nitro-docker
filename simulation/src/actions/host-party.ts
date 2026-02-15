@@ -1,6 +1,6 @@
 import { CONFIG } from '../config.js';
 import { queueBotShout, queueCreditChange, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
-import { rconBotDance, rconBotAction, rconBotEffect } from '../emulator/rcon.js';
+import { botDance, botAction, botEffect } from '../emulator/actions.js';
 import { getPartyAnnouncement } from '../chat/party-templates.js';
 import { pickBubbleForContext } from '../chat/bubble-styles.js';
 import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
@@ -68,9 +68,9 @@ export async function hostParty(agent: Agent, world: WorldState): Promise<void> 
   world.activeParties.push(party);
 
   // Make everyone dance (host + roommates, each with random dance style)
-  rconBotDance(agent.id, randomDance()).catch(() => {});
+  botDance(agent.id, randomDance()).catch(() => {});
   for (const mate of roommates) {
-    rconBotDance(mate.id, randomDance()).catch(() => {});
+    botDance(mate.id, randomDance()).catch(() => {});
   }
 
   // Host SHOUTS the announcement with party bubble
@@ -85,19 +85,19 @@ export async function hostParty(agent: Agent, world: WorldState): Promise<void> 
 
   // Host gets spotlight effect
   if (CONFIG.EFFECT_ENABLED) {
-    rconBotEffect(agent.id, 10, 60).catch(() => {});
+    botEffect(agent.id, 10, 60).catch(() => {});
   }
 
   // Gestures: host waves/jumps, guests wave
   if (CONFIG.GESTURE_ENABLED) {
     if (shouldGesture('party_host')) {
       const g = pickGesture('party_host');
-      if (g) rconBotAction(agent.id, g).catch(() => {});
+      if (g) botAction(agent.id, g).catch(() => {});
     }
     for (const mate of roommates.slice(0, 5)) {
       if (shouldGesture('party_arrive')) {
         const g = pickGesture('party_arrive');
-        if (g) rconBotAction(mate.id, g).catch(() => {});
+        if (g) botAction(mate.id, g).catch(() => {});
       }
     }
   }

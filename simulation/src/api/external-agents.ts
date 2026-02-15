@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { execute, query } from '../db.js';
 import { CONFIG } from '../config.js';
 import { generateFigure, generateGender } from '../agents/figures.js';
+import { initClientPool, getClientPool } from '../habbo-client/client-pool.js';
 
 export interface ExternalAgent {
   id: number;
@@ -115,23 +116,38 @@ export async function registerExternalAgent(
   );
   const userId = userResult.insertId;
 
-  // 2. Create bot with random figure
-  const figure = generateFigure();
-  const gender = generateGender();
+  // 2. Create bot (or skip in WS mode where user IS the agent)
+  let botId: number;
 
-  // Find the first available room to place the bot in
-  const rooms = await query<{ id: number }>(
-    `SELECT r.id FROM rooms r JOIN users u ON r.owner_id = u.id
-     WHERE u.username LIKE 'sim_owner_%' ORDER BY r.id LIMIT 1`
-  );
-  const startRoomId = rooms.length > 0 ? rooms[0].id : 0;
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    // In WS mode, external agent's botId = userId (no bot table entry needed)
+    botId = userId;
 
-  const botResult = await execute(
-    `INSERT INTO bots (user_id, room_id, name, motto, figure, gender, x, y, z, rot, chat_lines, chat_auto, chat_random, chat_delay, freeroam, type, effect, bubble_id)
-     VALUES (?, ?, ?, 'ClawHabbo Hotel Agent', ?, ?, 0, 0, 0, 0, '', '0', '0', 15, '1', 'generic', 0, 0)`,
-    [userId, startRoomId, name, figure, gender]
-  );
-  const botId = botResult.insertId;
+    // Connect the new agent via WebSocket
+    try {
+      const pool = getClientPool();
+      const { HabboConnection } = await import('../habbo-client/connection.js');
+      const conn = new HabboConnection(userId);
+      await conn.connect();
+    } catch {}
+  } else {
+    const figure = generateFigure();
+    const gender = generateGender();
+
+    // Find the first available room to place the bot in
+    const rooms = await query<{ id: number }>(
+      `SELECT r.id FROM rooms r JOIN users u ON r.owner_id = u.id
+       WHERE u.username LIKE 'sim_owner_%' ORDER BY r.id LIMIT 1`
+    );
+    const startRoomId = rooms.length > 0 ? rooms[0].id : 0;
+
+    const botResult = await execute(
+      `INSERT INTO bots (user_id, room_id, name, motto, figure, gender, x, y, z, rot, chat_lines, chat_auto, chat_random, chat_delay, freeroam, type, effect, bubble_id)
+       VALUES (?, ?, ?, 'ClawHabbo Hotel Agent', ?, ?, 0, 0, 0, 0, '', '0', '0', 15, '1', 'generic', 0, 0)`,
+      [userId, startRoomId, name, figure, gender]
+    );
+    botId = botResult.insertId;
+  }
 
   // 3. Create agent state with balanced personality
   const personality = {

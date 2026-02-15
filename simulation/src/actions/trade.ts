@@ -7,7 +7,7 @@ import { getTradeAnnouncement, getTradeBuyerAnnouncement } from '../chat/announc
 import { getItemName } from '../world/item-catalog.js';
 import { pickBubbleForContext } from '../chat/bubble-styles.js';
 import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
-import { rconBotAction } from '../emulator/rcon.js';
+import { botAction } from '../emulator/actions.js';
 import type { Agent, WorldState, ChatMessage } from '../types.js';
 
 interface ItemRow {
@@ -97,11 +97,11 @@ export async function agentTrade(agent: Agent, world: WorldState): Promise<void>
       if (CONFIG.GESTURE_ENABLED) {
         if (shouldGesture('trade_complete')) {
           const g = pickGesture('trade_complete');
-          if (g) rconBotAction(agent.id, g).catch(() => {});
+          if (g) botAction(agent.id, g).catch(() => {});
         }
         if (shouldGesture('trade_complete')) {
           const g = pickGesture('trade_complete');
-          if (g) rconBotAction(partner.id, g).catch(() => {});
+          if (g) botAction(partner.id, g).catch(() => {});
         }
       }
 

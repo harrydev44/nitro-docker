@@ -13,14 +13,18 @@
     "reset": "tsx src/scripts/reset.ts",
     "fetch-moltbook": "tsx src/scripts/fetch-moltbook.ts",
     "remodel": "tsx src/scripts/remodel-rooms.ts",
-    "dev:test": "TEST_AGENTS=5 tsx watch src/index.ts"
+    "dev:test": "TEST_AGENTS=5 tsx watch src/index.ts",
+    "dev:ws": "USE_WEBSOCKET_AGENTS=true tsx watch src/index.ts",
+    "dev:ws:test": "USE_WEBSOCKET_AGENTS=true TEST_AGENTS=5 tsx watch src/index.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "mysql2": "^3.9.7"
+    "mysql2": "^3.9.7",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }

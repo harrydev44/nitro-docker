@@ -9,7 +9,7 @@ import {
 } from '../chat/drama-templates.js';
 import { pickBubbleForContext } from '../chat/bubble-styles.js';
 import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
-import { rconBotAction, rconBotEffect } from '../emulator/rcon.js';
+import { botAction, botEffect } from '../emulator/actions.js';
 import type { Agent, WorldState } from '../types.js';
 
 // Per-agent cooldown tracking (transient, not persisted)
@@ -85,7 +85,7 @@ async function executeArgument(agent: Agent, target: Agent, world: WorldState, r
 
   // Effects: angry effect on attacker
   if (CONFIG.EFFECT_ENABLED) {
-    rconBotEffect(agent.id, 5, 15).catch(() => {});
+    botEffect(agent.id, 5, 15).catch(() => {});
   }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_ARGUMENT_RELATIONSHIP_DELTA);
@@ -145,14 +145,14 @@ async function executeReunion(agent: Agent, target: Agent, world: WorldState, ro
   if (CONFIG.GESTURE_ENABLED && shouldGesture('reunion')) {
     const g1 = pickGesture('reunion');
     const g2 = pickGesture('reunion');
-    if (g1) rconBotAction(agent.id, g1).catch(() => {});
-    if (g2) rconBotAction(target.id, g2).catch(() => {});
+    if (g1) botAction(agent.id, g1).catch(() => {});
+    if (g2) botAction(target.id, g2).catch(() => {});
   }
 
   // Effects: hearts on both agents
   if (CONFIG.EFFECT_ENABLED) {
-    rconBotEffect(agent.id, 7, 20).catch(() => {});
-    rconBotEffect(target.id, 7, 20).catch(() => {});
+    botEffect(agent.id, 7, 20).catch(() => {});
+    botEffect(target.id, 7, 20).catch(() => {});
   }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_REUNION_RELATIONSHIP_DELTA);
@@ -207,17 +207,17 @@ async function executeGift(agent: Agent, target: Agent, world: WorldState, roomN
   if (CONFIG.GESTURE_ENABLED) {
     if (shouldGesture('gift_give')) {
       const g = pickGesture('gift_give');
-      if (g) rconBotAction(agent.id, g).catch(() => {});
+      if (g) botAction(agent.id, g).catch(() => {});
     }
     if (shouldGesture('gift_receive')) {
       const g = pickGesture('gift_receive');
-      if (g) rconBotAction(target.id, g).catch(() => {});
+      if (g) botAction(target.id, g).catch(() => {});
     }
   }
 
   // Effects: sparkle on receiver
   if (CONFIG.EFFECT_ENABLED) {
-    rconBotEffect(target.id, 4, 15).catch(() => {});
+    botEffect(target.id, 4, 15).catch(() => {});
   }
 
   queueRelationshipChange(agent.id, target.id, CONFIG.DRAMA_GIFT_RELATIONSHIP_DELTA);

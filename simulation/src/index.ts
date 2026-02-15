@@ -11,12 +11,14 @@ import { startStatsServer } from './stats/collector.js';
 import { loadExternalAgents } from './api/external-agents.js';
 import { loadRoomModels, refreshOccupiedTiles } from './world/room-models.js';
 import { loadItemCatalog } from './world/item-catalog.js';
-import { rconBotDance, rconBotAction, rconBotEffect } from './emulator/rcon.js';
+import { botDance, botAction, botEffect } from './emulator/actions.js';
 import { shouldGesture, pickGesture } from './chat/gesture-triggers.js';
 import { refreshFame, getFameList } from './world/reputation.js';
 import { refreshCliques } from './world/cliques.js';
 import { getDayPeriod } from './world/day-cycle.js';
 import { startTestAgents } from './test-agents/runner.js';
+import { initClientPool, getClientPool } from './habbo-client/client-pool.js';
+import { loadAgents } from './agents/loader.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -71,6 +73,20 @@ async function tick(world: WorldState): Promise<void> {
   // 1. Refresh all caches from DB (agents, rooms, relationships, items)
   await refreshCache();
   await refreshOccupiedTiles();
+
+  // In WS mode, sync room positions from ClientPool into agent cache
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    const pool = getClientPool();
+    const agents = getAgents();
+    for (const agent of agents) {
+      // Only sync sim_agent_* (WS) agents — ext agents keep their DB room_id
+      const conn = pool.get(agent.id);
+      if (conn) {
+        agent.currentRoomId = conn.roomId;
+      }
+    }
+  }
+
   world.agents = getAgents();
   world.rooms = getRooms();
 
@@ -119,7 +135,8 @@ async function tick(world: WorldState): Promise<void> {
   }
 
   // Sync bot population to rooms.users so Navigator shows correct counts
-  if (currentTick % 5 === 0) {
+  // In WS mode, the emulator tracks real users automatically — skip this
+  if (!CONFIG.USE_WEBSOCKET_AGENTS && currentTick % 5 === 0) {
     try {
       await execute(`UPDATE rooms SET users = 0 WHERE users > 0`);
       await execute(
@@ -146,9 +163,9 @@ async function tick(world: WorldState): Promise<void> {
         const agent = world.agents.find(a => a.id === fame.agentId);
         if (!agent || !agent.currentRoomId) continue;
         if (fame.tier === 'legend') {
-          rconBotEffect(fame.agentId, 10, 200).catch(() => {}); // spotlight
+          botEffect(fame.agentId, 10, 200).catch(() => {}); // spotlight
         } else if (fame.tier === 'celebrity') {
-          rconBotEffect(fame.agentId, 7, 200).catch(() => {});  // hearts
+          botEffect(fame.agentId, 7, 200).catch(() => {});  // hearts
         }
       }
     }
@@ -183,7 +200,7 @@ async function tick(world: WorldState): Promise<void> {
       const botsInRoom = world.agents.filter(a => a.currentRoomId === party.roomId);
       for (const bot of botsInRoom) {
         const danceId = (bot.id % 4) + 1; // deterministic per bot so it doesn't flicker
-        rconBotDance(bot.id, danceId).catch(() => {});
+        botDance(bot.id, danceId).catch(() => {});
         party.attendees.add(bot.id);
       }
 
@@ -191,12 +208,12 @@ async function tick(world: WorldState): Promise<void> {
       if (CONFIG.GESTURE_ENABLED && botsInRoom.length > 0 && shouldGesture('party_pulse')) {
         const randomBot = botsInRoom[Math.floor(Math.random() * botsInRoom.length)];
         const g = pickGesture('party_pulse');
-        if (g) rconBotAction(randomBot.id, g).catch(() => {});
+        if (g) botAction(randomBot.id, g).catch(() => {});
       }
 
       // Refresh host spotlight effect every 10 ticks
       if (CONFIG.EFFECT_ENABLED && currentTick % 10 === 0) {
-        rconBotEffect(party.hostAgentId, 10, 60).catch(() => {});
+        botEffect(party.hostAgentId, 10, 60).catch(() => {});
       }
     }
   }
@@ -206,7 +223,7 @@ async function tick(world: WorldState): Promise<void> {
   for (const party of expiredParties) {
     const botsInRoom = world.agents.filter(a => a.currentRoomId === party.roomId);
     for (const bot of botsInRoom) {
-      rconBotDance(bot.id, 0).catch(() => {});
+      botDance(bot.id, 0).catch(() => {});
     }
     world.tickerEvents.push({
       type: 'party_end',
@@ -227,6 +244,11 @@ async function tick(world: WorldState): Promise<void> {
 async function main(): Promise<void> {
   console.log('=== ClawHabbo Hotel ===');
   console.log(`Tick interval: ${CONFIG.TICK_INTERVAL_MS}ms, agents/tick: ${CONFIG.AGENTS_PER_TICK}`);
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    console.log('[MODE] WebSocket agents (real users via WS)');
+  } else {
+    console.log('[MODE] Bot agents (RCON)');
+  }
   if (CONFIG.AI_ENABLED) {
     console.log(`[AI] OpenRouter enabled (${CONFIG.AI_MODEL})`);
   } else {
@@ -241,6 +263,21 @@ async function main(): Promise<void> {
 
   // Load initial world state via cache
   await refreshCache();
+
+  // In WS mode, connect all agents via WebSocket
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    const agents = await loadAgents();
+    if (agents.length === 0) {
+      console.error('[INIT] No WS agents found! Run "USE_WEBSOCKET_AGENTS=true npm run generate-agents" first.');
+      process.exit(1);
+    }
+
+    const pool = initClientPool();
+    await pool.connectAll(agents.map(a => ({ id: a.id })));
+
+    const stats = pool.getStats();
+    console.log(`[POOL] Health: ${stats.ready + stats.inRoom} ready, ${stats.disconnected} disconnected`);
+  }
 
   const world: WorldState = {
     rooms: getRooms(),
@@ -284,8 +321,8 @@ async function main(): Promise<void> {
 
   tickLoop();
 
-  // Start test agents if enabled
-  if (CONFIG.TEST_AGENT_COUNT > 0) {
+  // Start test agents if enabled (external HTTP bots, not for WS mode)
+  if (CONFIG.TEST_AGENT_COUNT > 0 && !CONFIG.USE_WEBSOCKET_AGENTS) {
     startTestAgents(CONFIG.TEST_AGENT_COUNT);
   }
 
@@ -293,6 +330,9 @@ async function main(): Promise<void> {
   process.on('SIGINT', async () => {
     console.log('\n[SIM] Shutting down...');
     running = false;
+    if (CONFIG.USE_WEBSOCKET_AGENTS) {
+      try { getClientPool().disconnectAll(); } catch {}
+    }
     await closePool();
     process.exit(0);
   });
@@ -300,6 +340,9 @@ async function main(): Promise<void> {
   process.on('SIGTERM', async () => {
     console.log('\n[SIM] Shutting down...');
     running = false;
+    if (CONFIG.USE_WEBSOCKET_AGENTS) {
+      try { getClientPool().disconnectAll(); } catch {}
+    }
     await closePool();
     process.exit(0);
   });

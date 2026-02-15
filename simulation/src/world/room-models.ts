@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { CONFIG } from '../config.js';
 
 interface FloorTile {
   x: number;
@@ -86,12 +87,15 @@ export async function refreshOccupiedTiles(): Promise<void> {
   roomSittableTiles.clear();
 
   // 1. Load furniture positions
+  const ownerFilter = CONFIG.USE_WEBSOCKET_AGENTS
+    ? `u.username LIKE 'sim_owner_%' OR u.username LIKE 'sim_agent_%'`
+    : `u.username LIKE 'sim_owner_%'`;
   const items = await query<{ room_id: number; item_id: number; x: number; y: number; rot: number }>(
     `SELECT i.room_id, i.item_id, i.x, i.y, i.rot
      FROM items i
      JOIN rooms r ON i.room_id = r.id
      JOIN users u ON r.owner_id = u.id
-     WHERE i.room_id > 0 AND u.username LIKE 'sim_owner_%'`
+     WHERE i.room_id > 0 AND (${ownerFilter})`
   );
 
   for (const item of items) {
@@ -127,19 +131,25 @@ export async function refreshOccupiedTiles(): Promise<void> {
 
   // 2. Load bot positions — bots should not overlap each other
   botPositions.clear();
-  const bots = await query<{ id: number; room_id: number; x: number; y: number }>(
-    `SELECT b.id, b.room_id, b.x, b.y FROM bots b
-     JOIN users u ON b.user_id = u.id
-     WHERE b.room_id > 0 AND u.username LIKE 'sim_owner_%'`
-  );
 
-  for (const bot of bots) {
-    if (!roomBotTiles.has(bot.room_id)) {
-      roomBotTiles.set(bot.room_id, new Set());
+  if (!CONFIG.USE_WEBSOCKET_AGENTS) {
+    // Bot mode: query bots table for positions
+    const bots = await query<{ id: number; room_id: number; x: number; y: number }>(
+      `SELECT b.id, b.room_id, b.x, b.y FROM bots b
+       JOIN users u ON b.user_id = u.id
+       WHERE b.room_id > 0 AND u.username LIKE 'sim_owner_%'`
+    );
+
+    for (const bot of bots) {
+      if (!roomBotTiles.has(bot.room_id)) {
+        roomBotTiles.set(bot.room_id, new Set());
+      }
+      roomBotTiles.get(bot.room_id)!.add(`${bot.x},${bot.y}`);
+      botPositions.set(bot.id, { x: bot.x, y: bot.y, roomId: bot.room_id });
     }
-    roomBotTiles.get(bot.room_id)!.add(`${bot.x},${bot.y}`);
-    botPositions.set(bot.id, { x: bot.x, y: bot.y, roomId: bot.room_id });
   }
+  // In WS mode, the emulator handles user collision natively.
+  // Bot tile tracking is used for within-tick anti-stacking (via claimBotTile).
 }
 
 /**

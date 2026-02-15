@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { query, execute, withTransaction } from '../db.js';
-import { rconBotTalk, rconBotShout, rconBotDance, rconBotAction } from '../emulator/rcon.js';
+import { botTalk, botShout, botDance, botAction } from '../emulator/actions.js';
+import { CONFIG } from '../config.js';
+import { getClientPool } from '../habbo-client/client-pool.js';
+import { buildWalkPacket } from '../habbo-client/protocol.js';
 import { authenticateAgent, registerExternalAgent, updateHeartbeat, getExternalAgentCount } from './external-agents.js';
 import { checkGlobalRate, checkActionRate } from './rate-limiter.js';
 import { FURNITURE_CATALOG } from '../actions/buy.js';
 import { MODELS } from '../actions/create-room.js';
-import { CONFIG } from '../config.js';
 import type { ExternalAgent } from './external-agents.js';
 import type { WorldState } from '../types.js';
 
@@ -518,8 +520,13 @@ async function handleActionMove(agent: ExternalAgent, req: IncomingMessage, res:
     return true;
   }
 
-  // Move bot via DB update
-  await execute(`UPDATE bots SET room_id = ? WHERE id = ?`, [roomId, agent.botId]);
+  // Move bot via DB update or WebSocket
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    const pool = getClientPool();
+    await pool.moveToRoom(agent.botId, roomId);
+  } else {
+    await execute(`UPDATE bots SET room_id = ? WHERE id = ?`, [roomId, agent.botId]);
+  }
 
   sendJSON(res, 200, { ok: true, room: { id: room.id, name: room.name, purpose: room.purpose } });
   return true;
@@ -552,7 +559,7 @@ async function handleActionChat(agent: ExternalAgent, req: IncomingMessage, res:
     return true;
   }
 
-  const success = await rconBotTalk(agent.botId, message);
+  const success = await botTalk(agent.botId, message);
   if (!success) {
     sendJSON(res, 502, { error: 'Failed to send chat (emulator may be down)' });
     return true;
@@ -599,7 +606,7 @@ async function handleActionShout(agent: ExternalAgent, req: IncomingMessage, res
     return true;
   }
 
-  const success = await rconBotShout(agent.botId, message);
+  const success = await botShout(agent.botId, message);
   if (!success) {
     sendJSON(res, 502, { error: 'Failed to shout (emulator may be down)' });
     return true;
@@ -630,7 +637,7 @@ async function handleActionDance(agent: ExternalAgent, req: IncomingMessage, res
     return true;
   }
 
-  const success = await rconBotDance(agent.botId, style);
+  const success = await botDance(agent.botId, style);
   if (!success) {
     sendJSON(res, 502, { error: 'Failed to dance (emulator may be down)' });
     return true;
@@ -667,7 +674,7 @@ async function handleActionGesture(agent: ExternalAgent, req: IncomingMessage, r
     return true;
   }
 
-  const success = await rconBotAction(agent.botId, actionId);
+  const success = await botAction(agent.botId, actionId);
   if (!success) {
     sendJSON(res, 502, { error: 'Failed to gesture (emulator may be down)' });
     return true;
@@ -785,7 +792,12 @@ async function handleActionWalk(agent: ExternalAgent, req: IncomingMessage, res:
     return true;
   }
 
-  await execute(`UPDATE bots SET x = ?, y = ? WHERE id = ?`, [x, y, agent.botId]);
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    const pool = getClientPool();
+    pool.send(agent.botId, buildWalkPacket(x, y));
+  } else {
+    await execute(`UPDATE bots SET x = ?, y = ? WHERE id = ?`, [x, y, agent.botId]);
+  }
 
   sendJSON(res, 200, { ok: true, x, y });
   return true;
@@ -1019,15 +1031,21 @@ async function handleActionTrade(agent: ExternalAgent, req: IncomingMessage, res
     return true;
   }
 
-  // Get target user_id from bots table
-  const targetBotRows = await query<{ user_id: number }>(
-    `SELECT user_id FROM bots WHERE id = ?`, [targetBot.id]
-  );
-  if (!targetBotRows.length) {
-    sendJSON(res, 404, { error: 'Target agent bot not found in database' });
-    return true;
+  // Get target user_id
+  let targetUserId: number;
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    // In WS mode, agent.id = user.id (same)
+    targetUserId = targetBot.userId;
+  } else {
+    const targetBotRows = await query<{ user_id: number }>(
+      `SELECT user_id FROM bots WHERE id = ?`, [targetBot.id]
+    );
+    if (!targetBotRows.length) {
+      sendJSON(res, 404, { error: 'Target agent bot not found in database' });
+      return true;
+    }
+    targetUserId = targetBotRows[0].user_id;
   }
-  const targetUserId = targetBotRows[0].user_id;
 
   // Execute trade atomically
   try {
@@ -1114,7 +1132,11 @@ async function handleActionLook(agent: ExternalAgent, req: IncomingMessage, res:
     return true;
   }
 
-  await execute(`UPDATE bots SET figure = ? WHERE id = ?`, [figure, agent.botId]);
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    await execute(`UPDATE users SET look = ? WHERE id = ?`, [figure, agent.botId]);
+  } else {
+    await execute(`UPDATE bots SET figure = ? WHERE id = ?`, [figure, agent.botId]);
+  }
 
   sendJSON(res, 200, { ok: true, figure });
   return true;
@@ -1139,7 +1161,11 @@ async function handleActionMotto(agent: ExternalAgent, req: IncomingMessage, res
     return true;
   }
 
-  await execute(`UPDATE bots SET motto = ? WHERE id = ?`, [motto, agent.botId]);
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    await execute(`UPDATE users SET motto = ? WHERE id = ?`, [motto, agent.botId]);
+  } else {
+    await execute(`UPDATE bots SET motto = ? WHERE id = ?`, [motto, agent.botId]);
+  }
 
   sendJSON(res, 200, { ok: true, motto });
   return true;

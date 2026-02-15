@@ -117,6 +117,12 @@ export const CONFIG = {
   // External agent API
   MAX_EXTERNAL_AGENTS: 50,
 
+  // WebSocket agent mode
+  USE_WEBSOCKET_AGENTS: process.env.USE_WEBSOCKET_AGENTS === 'true',
+  WS_EMULATOR_URL: process.env.WS_EMULATOR_URL || 'ws://127.0.0.1:2096',
+  WS_CONNECT_BATCH_SIZE: 5,
+  WS_CONNECT_BATCH_DELAY_MS: 2000,
+
   // Test agents (dev mode)
   TEST_AGENT_COUNT: parseInt(process.env.TEST_AGENTS || '0'),
 } as const;

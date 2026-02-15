@@ -1,5 +1,9 @@
 import { getPool } from '../db.js';
+import { CONFIG } from '../config.js';
 import { rconBotTalk, rconBotShout } from '../emulator/rcon.js';
+import { wsBotTalk, wsBotShout } from '../emulator/ws-actions.js';
+import { getClientPool } from '../habbo-client/client-pool.js';
+import { buildWalkPacket } from '../habbo-client/protocol.js';
 
 // Accumulated writes per tick, flushed in bulk at tick end
 
@@ -49,8 +53,8 @@ let relationshipUpdates: Map<string, number> = new Map(); // "a:b" -> total delt
 let memoryInserts: MemoryInsert[] = [];
 let agentStateUpdates: Map<number, AgentStateUpdate> = new Map();
 
-// RCON chat queue — sent directly to emulator, no DB roundtrip
-const pendingRconChats: { botId: number; message: string; bubbleId: number; shout: boolean }[] = [];
+// RCON/WS chat queue — sent directly to emulator, no DB roundtrip
+const pendingChats: { botId: number; message: string; bubbleId: number; shout: boolean }[] = [];
 
 // --- Buffer methods (called during tick, no DB) ---
 
@@ -64,12 +68,11 @@ export function queueBotMove(botId: number, roomId: number, x: number, y: number
 }
 
 export function queueBotChat(botId: number, chatLine: string, _delay: number, bubbleId = -1): void {
-  // Send via RCON for one-shot delivery (no emulator auto-repeat)
-  pendingRconChats.push({ botId, message: chatLine, bubbleId, shout: false });
+  pendingChats.push({ botId, message: chatLine, bubbleId, shout: false });
 }
 
 export function queueBotShout(botId: number, chatLine: string, bubbleId = -1): void {
-  pendingRconChats.push({ botId, message: chatLine, bubbleId, shout: true });
+  pendingChats.push({ botId, message: chatLine, bubbleId, shout: true });
 }
 
 export function queueCreditChange(userId: number, delta: number): void {
@@ -94,32 +97,51 @@ export function queueAgentState(s: AgentStateUpdate): void {
 export async function flushAll(): Promise<void> {
   const pool = getPool();
   const conn = await pool.getConnection();
+  const useWS = CONFIG.USE_WEBSOCKET_AGENTS;
 
   try {
     await conn.beginTransaction();
 
     // 1. Bot updates (position + chat)
     if (botUpdates.size > 0) {
-      for (const bot of botUpdates.values()) {
-        const sets: string[] = [];
-        const params: any[] = [];
+      if (useWS) {
+        // WS mode: send room enter + walk packets instead of DB updates
+        const clientPool = getClientPool();
+        for (const bot of botUpdates.values()) {
+          if (bot.roomId !== undefined) {
+            // Move to room via WebSocket — await so walk happens after entry
+            const entered = await clientPool.moveToRoom(bot.id, bot.roomId).catch(() => false);
+            if (entered && bot.x !== undefined && bot.y !== undefined) {
+              clientPool.send(bot.id, buildWalkPacket(bot.x, bot.y));
+            }
+          } else if (bot.x !== undefined && bot.y !== undefined) {
+            // Walk only (no room change)
+            clientPool.send(bot.id, buildWalkPacket(bot.x, bot.y));
+          }
+        }
+      } else {
+        // Bot mode: update bots table
+        for (const bot of botUpdates.values()) {
+          const sets: string[] = [];
+          const params: any[] = [];
 
-        if (bot.roomId !== undefined) {
-          sets.push('room_id = ?', 'x = ?', 'y = ?');
-          params.push(bot.roomId, bot.x || 0, bot.y || 0);
-        }
-        if (bot.chatLines !== undefined) {
-          sets.push("chat_lines = ?", "chat_auto = '0'", "chat_random = '0'");
-          params.push(bot.chatLines);
-        }
-        if (bot.chatDelay !== undefined) {
-          sets.push('chat_delay = ?');
-          params.push(bot.chatDelay);
-        }
+          if (bot.roomId !== undefined) {
+            sets.push('room_id = ?', 'x = ?', 'y = ?');
+            params.push(bot.roomId, bot.x || 0, bot.y || 0);
+          }
+          if (bot.chatLines !== undefined) {
+            sets.push("chat_lines = ?", "chat_auto = '0'", "chat_random = '0'");
+            params.push(bot.chatLines);
+          }
+          if (bot.chatDelay !== undefined) {
+            sets.push('chat_delay = ?');
+            params.push(bot.chatDelay);
+          }
 
-        if (sets.length > 0) {
-          params.push(bot.id);
-          await conn.execute(`UPDATE bots SET ${sets.join(', ')} WHERE id = ?`, params);
+          if (sets.length > 0) {
+            params.push(bot.id);
+            await conn.execute(`UPDATE bots SET ${sets.join(', ')} WHERE id = ?`, params);
+          }
         }
       }
     }
@@ -190,13 +212,21 @@ export async function flushAll(): Promise<void> {
     memoryInserts = [];
     agentStateUpdates.clear();
 
-    // Send queued RCON chats (fire-and-forget, after DB transaction)
-    const chats = pendingRconChats.splice(0);
+    // Send queued chats (fire-and-forget, after DB transaction)
+    const chats = pendingChats.splice(0);
     for (const chat of chats) {
-      if (chat.shout) {
-        rconBotShout(chat.botId, chat.message).catch(() => {});
+      if (useWS) {
+        if (chat.shout) {
+          wsBotShout(chat.botId, chat.message).catch(() => {});
+        } else {
+          wsBotTalk(chat.botId, chat.message, chat.bubbleId).catch(() => {});
+        }
       } else {
-        rconBotTalk(chat.botId, chat.message, chat.bubbleId).catch(() => {});
+        if (chat.shout) {
+          rconBotShout(chat.botId, chat.message).catch(() => {});
+        } else {
+          rconBotTalk(chat.botId, chat.message, chat.bubbleId).catch(() => {});
+        }
       }
     }
   }
