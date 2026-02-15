@@ -56,8 +56,8 @@ export function startStatsServer(world: WorldState): void {
     }
   });
 
-  server.listen(CONFIG.STATS_PORT, () => {
-    console.log(`[STATS] Stats server running on http://localhost:${CONFIG.STATS_PORT}/stats`);
+  server.listen(CONFIG.STATS_PORT, '0.0.0.0', () => {
+    console.log(`[STATS] Stats server running on http://0.0.0.0:${CONFIG.STATS_PORT}/stats`);
   });
 }
 
