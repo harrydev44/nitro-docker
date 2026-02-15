@@ -9,7 +9,7 @@ CONFIG="/usr/share/nginx/html/renderer-config.json"
 sed -i "s|\"socket.url\":.*|\"socket.url\": \"${SOCKET_URL}\",|" "$CONFIG"
 
 # Replace asset URLs from localhost to relative paths (served by same nginx)
-sed -i 's|"asset.url":.*|"asset.url": "/assets",|' "$CONFIG"
+sed -i 's|"asset.url":.*|"asset.url": "/game-assets",|' "$CONFIG"
 sed -i 's|"image.library.url":.*|"image.library.url": "/swf/c_images/",|' "$CONFIG"
 sed -i 's|"hof.furni.url":.*|"hof.furni.url": "/swf/dcr/hof_furni",|' "$CONFIG"
 
