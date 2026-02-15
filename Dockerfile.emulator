@@ -7,8 +7,8 @@ RUN yum update -y && \
     yum install -y maven git wget && \
     yum clean all
 
-# Copy emulator source and build
-COPY emulator/arcturus/ ./arcturus/
+# Clone emulator source and build
+RUN git clone --depth 1 https://github.com/harrydev44/arcturus-community.git arcturus
 RUN cd arcturus && mvn package -q
 
 # Download NitroWebsockets plugin

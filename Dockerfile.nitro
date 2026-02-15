@@ -1,17 +1,24 @@
 # Stage 1: Build Nitro React client
 FROM node:20-alpine AS build
 
+RUN apk add --no-cache git
+
 WORKDIR /build
 
-# Copy and install dependencies
-COPY nitro/nitro-react/package.json nitro/nitro-react/yarn.lock* ./
-RUN yarn install --frozen-lockfile || yarn install
+# Clone nitro-react source
+RUN git clone --depth 1 -b habbo-ai https://github.com/harrydev44/nitro-react.git .
 
-# Copy source and build
-COPY nitro/nitro-react/ ./
+# Install dependencies and build
+RUN yarn install --frozen-lockfile || yarn install
 RUN yarn build
 
-# Stage 2: Nginx runtime
+# Stage 2: Download static assets
+FROM alpine/git AS assets
+
+RUN git clone --depth 1 https://git.krews.org/nitro/default-assets.git /assets
+RUN git clone --depth 1 https://git.krews.org/morningstar/arcturus-morningstar-default-swf-pack.git /swf
+
+# Stage 3: Nginx runtime
 FROM nginx:alpine
 
 RUN apk add --no-cache bash
@@ -19,9 +26,9 @@ RUN apk add --no-cache bash
 # Copy built client
 COPY --from=build /build/dist/ /usr/share/nginx/html/
 
-# Copy static assets
-COPY nitro/nitro-assets/ /usr/share/nginx/assets/
-COPY nitro/nitro-swf/ /usr/share/nginx/swf/
+# Copy static assets from git clones
+COPY --from=assets /assets/ /usr/share/nginx/assets/
+COPY --from=assets /swf/ /usr/share/nginx/swf/
 
 # Copy config templates (start.sh will sed-replace dynamic values at runtime)
 COPY nitro/configuration/nitro-react/public/renderer-config.json /usr/share/nginx/html/renderer-config.json
