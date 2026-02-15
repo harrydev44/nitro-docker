@@ -27,10 +27,20 @@ EOF
 
 echo "[START] config.ini generated"
 
+# Debug: show connection params (no password)
+echo "[START] DB_HOST=${DB_HOST} DB_PORT=${DB_PORT} DB_USER=${DB_USER} DB_NAME=${DB_NAME}"
+echo "[START] mysql client: $(which mysql 2>&1 || echo 'NOT FOUND')"
+
 # Wait for MySQL to be ready
 echo "[START] Waiting for MySQL..."
-until mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1" &>/dev/null; do
-  echo "[START] MySQL not ready, retrying in 3s..."
+ATTEMPT=0
+until mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1" 2>&1; do
+  ATTEMPT=$((ATTEMPT+1))
+  echo "[START] MySQL not ready (attempt ${ATTEMPT}), retrying in 3s..."
+  if [ "$ATTEMPT" -ge 3 ]; then
+    echo "[START] Showing full error:"
+    mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "SELECT 1" 2>&1 || true
+  fi
   sleep 3
 done
 echo "[START] MySQL is ready"
