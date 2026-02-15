@@ -45,17 +45,17 @@ until mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" -e "
 done
 echo "[START] MySQL is ready"
 
-# Check if DB needs seeding
-TABLES=$(mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}';" 2>/dev/null || echo "0")
+# Check if DB needs seeding (look for a specific Arcturus table)
+HAS_EMULATOR=$(mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='emulator_settings';" 2>/dev/null || echo "0")
 
-if [ "$TABLES" -lt "5" ]; then
+if [ "$HAS_EMULATOR" -eq "0" ]; then
   echo "[START] Database is empty, importing base schema..."
   mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" < /app/sql/arcturus_3.0.0-stable_base_database--compact.sql
   echo "[START] Base schema imported. Applying migration..."
   mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" < /app/sql/arcturus_migration_3.0.0_to_3.5.0.sql
   echo "[START] Migration applied"
 else
-  echo "[START] Database already seeded ($TABLES tables found)"
+  echo "[START] Database already seeded (emulator_settings exists)"
 fi
 
 # Start the emulator
