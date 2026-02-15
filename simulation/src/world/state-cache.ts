@@ -2,6 +2,13 @@ import { query } from '../db.js';
 import { CONFIG } from '../config.js';
 import type { Agent, SimRoom, Relationship, PersonalityTraits, AgentPreferences, RoomPurpose, CachedMemory } from '../types.js';
 
+// MySQL 8 may return JSON columns as objects; MariaDB returns strings
+function safeParse<T>(val: any, fallback: T): T {
+  if (val == null) return fallback;
+  if (typeof val === 'object') return val as T;
+  try { return JSON.parse(val); } catch { return fallback; }
+}
+
 // In-memory caches loaded once per tick
 let agentCache: Agent[] = [];
 let roomCache: SimRoom[] = [];
@@ -112,9 +119,9 @@ async function refreshWSAgentCache(): Promise<void> {
       id: user.id,
       userId: user.id,
       name: user.real_name,
-      personality: state ? JSON.parse(state.personality) : defaultPersonality,
-      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
-      goals: state ? JSON.parse(state.goals) : [],
+      personality: safeParse(state?.personality, defaultPersonality),
+      preferences: safeParse(state?.preferences, defaultPreferences),
+      goals: safeParse(state?.goals, []),
       currentRoomId: null, // Set by pool sync in index.ts
       credits: user.credits,
       state: (state?.state as Agent['state']) || 'idle',
@@ -143,9 +150,9 @@ async function refreshWSAgentCache(): Promise<void> {
       id: bot.id,
       userId: bot.user_id,
       name: bot.name,
-      personality: state ? JSON.parse(state.personality) : defaultPersonality,
-      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
-      goals: state ? JSON.parse(state.goals) : [],
+      personality: safeParse(state?.personality, defaultPersonality),
+      preferences: safeParse(state?.preferences, defaultPreferences),
+      goals: safeParse(state?.goals, []),
       currentRoomId: bot.room_id || null,
       credits: extCreditMap.get(bot.user_id) || 0,
       state: (state?.state as Agent['state']) || 'idle',
@@ -197,9 +204,9 @@ async function refreshBotAgentCache(): Promise<void> {
       id: bot.id,
       userId: bot.user_id,
       name: bot.name,
-      personality: state ? JSON.parse(state.personality) : defaultPersonality,
-      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
-      goals: state ? JSON.parse(state.goals) : [],
+      personality: safeParse(state?.personality, defaultPersonality),
+      preferences: safeParse(state?.preferences, defaultPreferences),
+      goals: safeParse(state?.goals, []),
       currentRoomId: bot.room_id || null,
       credits: creditMap.get(bot.user_id) || 0,
       state: (state?.state as Agent['state']) || 'idle',

@@ -2,6 +2,12 @@ import { query } from '../db.js';
 import { CONFIG } from '../config.js';
 import type { Agent, PersonalityTraits, AgentPreferences, Goal } from '../types.js';
 
+function safeParse<T>(val: any, fallback: T): T {
+  if (val == null) return fallback;
+  if (typeof val === 'object') return val as T;
+  try { return JSON.parse(val); } catch { return fallback; }
+}
+
 interface BotRow {
   id: number;
   user_id: number;
@@ -77,9 +83,9 @@ async function loadWSAgents(): Promise<Agent[]> {
       id: user.id,          // In WS mode, agent ID = user ID
       userId: user.id,       // Same user — no owner indirection
       name: user.real_name,
-      personality: state ? JSON.parse(state.personality) : defaultPersonality,
-      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
-      goals: state ? JSON.parse(state.goals) : [],
+      personality: safeParse(state?.personality, defaultPersonality),
+      preferences: safeParse(state?.preferences, defaultPreferences),
+      goals: safeParse(state?.goals, []),
       currentRoomId: null,   // Room tracked by ClientPool, not DB
       credits: creditMap.get(user.id) || 0,
       state: (state?.state as Agent['state']) || 'idle',
@@ -135,9 +141,9 @@ async function loadBotAgents(): Promise<Agent[]> {
       id: bot.id,
       userId: bot.user_id,
       name: bot.name,
-      personality: state ? JSON.parse(state.personality) : defaultPersonality,
-      preferences: state ? JSON.parse(state.preferences) : defaultPreferences,
-      goals: state ? JSON.parse(state.goals) : [],
+      personality: safeParse(state?.personality, defaultPersonality),
+      preferences: safeParse(state?.preferences, defaultPreferences),
+      goals: safeParse(state?.goals, []),
       currentRoomId: bot.room_id || null,
       credits: creditMap.get(bot.user_id) || 0,
       state: (state?.state as Agent['state']) || 'idle',
