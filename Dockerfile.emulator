@@ -21,8 +21,10 @@ FROM amazoncorretto:8
 
 WORKDIR /app
 
+# Install MySQL 8 client (needed for caching_sha2_password auth)
 RUN yum update -y && \
-    yum install -y mysql && \
+    rpm -ivh https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm && \
+    yum install -y mysql-community-client --nogpgcheck && \
     yum clean all
 
 # Copy built JAR and plugins
