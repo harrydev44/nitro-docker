@@ -1,4 +1,7 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../config.js';
 import { query } from '../db.js';
 import { getDayPeriod, getDayProgress } from '../world/day-cycle.js';
@@ -6,6 +9,19 @@ import { getFameList, isCelebrity } from '../world/reputation.js';
 import { getCliqueSummary } from '../world/cliques.js';
 import { handleExternalAPI, setWorldRef } from '../api/external-api.js';
 import type { WorldState, TickerEvent } from '../types.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.join(__dirname, '../../public');
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
 
 export function startStatsServer(world: WorldState): void {
   setWorldRef(world);
@@ -23,6 +39,40 @@ export function startStatsServer(world: WorldState): void {
     }
 
     const url = req.url || '';
+
+    // Serve static files from public/
+    if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
+      try {
+        const content = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
+
+    if (req.method === 'GET' && url.startsWith('/public/')) {
+      const filePath = url.slice('/public'.length); // e.g. /style.css
+      if (filePath.includes('..')) {
+        res.writeHead(400);
+        res.end('Bad request');
+        return;
+      }
+      const fullPath = path.join(PUBLIC_DIR, filePath);
+      const ext = path.extname(fullPath);
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      try {
+        const content = fs.readFileSync(fullPath);
+        res.writeHead(200, { 'Content-Type': mime });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+      return;
+    }
 
     // External agent API routes (/api/v1/* and /skill.md)
     if (url.startsWith('/api/v1/') || url === '/skill.md') {
