@@ -70,21 +70,11 @@ export const CONFIG = {
   HOME_ROOM_SCORE_BONUS: 0.4,          // move scoring bonus for home room
   CLOSE_FRIEND_FOLLOW_BONUS: 0.3,      // bonus when close friend just moved there
 
-  // AI chat settings (OpenRouter)
-  AI_ENABLED: !!process.env.OPENROUTER_API_KEY,
-  AI_MODEL: 'anthropic/claude-3.5-haiku',
-  AI_MAX_TOKENS: 40,
-  AI_TEMPERATURE: 0.9,
-  AI_TIMEOUT_MS: 5000,
-  AI_COOLDOWN_TICKS: 3,
-  AI_MAX_CONCURRENT: 5,
-
   // Conversation chain settings
   CONVERSATION_MAX_EXCHANGES: 4,
   CONVERSATION_TIMEOUT_TICKS: 5,
   CONVERSATION_CHAT_SCORE_BOOST: 0.5,
   CONVERSATION_START_PROBABILITY: 0.4,
-  CONVERSATION_AI_COOLDOWN_OVERRIDE: 3,
 
   // Drama settings
   DRAMA_ARGUMENT_THRESHOLD: -10,
@@ -94,7 +84,6 @@ export const CONFIG = {
   DRAMA_GIFT_THRESHOLD: 40,
   DRAMA_GIFT_RELATIONSHIP_DELTA: 5,
   DRAMA_COOLDOWN_TICKS: 20,
-  DRAMA_AI_PROBABILITY: 0.5,
 
   // Party settings
   PARTY_COST: 200,

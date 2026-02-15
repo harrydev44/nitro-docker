@@ -58,6 +58,15 @@ else
   echo "[START] Database already seeded (emulator_settings exists)"
 fi
 
+# Background loop: refresh spectator SSO ticket every 60s
+# The emulator clears auth_ticket after login, so spectators can't reload without this.
+(while true; do
+  sleep 60
+  mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" \
+    -e "UPDATE users SET auth_ticket = 'spectator-sso-ticket' WHERE username = 'spectator'" 2>/dev/null
+done) &
+echo "[START] SSO ticket refresh loop started"
+
 # Start the emulator
 echo "[START] Starting Arcturus Emulator..."
 exec java -Dfile.encoding=UTF-8 -Duser.country=EN -Duser.language=en -jar /app/Habbo-3.5.0-jar-with-dependencies.jar

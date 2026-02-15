@@ -9,6 +9,7 @@ import {
   buildShoutPacket,
   buildDancePacket,
   buildActionPacket,
+  buildWhisperPacket,
 } from '../habbo-client/protocol.js';
 import { rconBotEffect } from './rcon.js';
 
@@ -30,6 +31,11 @@ export async function wsBotDance(agentId: number, danceId: number): Promise<bool
 export async function wsBotAction(agentId: number, actionId: number): Promise<boolean> {
   const pool = getClientPool();
   return pool.send(agentId, buildActionPacket(actionId));
+}
+
+export async function wsBotWhisper(agentId: number, targetName: string, message: string): Promise<boolean> {
+  const pool = getClientPool();
+  return pool.send(agentId, buildWhisperPacket(targetName, message));
 }
 
 /**

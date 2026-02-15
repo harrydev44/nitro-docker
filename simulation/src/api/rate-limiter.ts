@@ -23,6 +23,8 @@ const ACTION_COOLDOWNS: Record<string, number> = {
   trade: 15,
   look: 30,
   motto: 30,
+  whisper: 5,
+  host_party: 120,
 };
 
 const GLOBAL_LIMIT = 60;          // requests per minute

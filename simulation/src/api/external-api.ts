@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { query, execute, withTransaction } from '../db.js';
-import { botTalk, botShout, botDance, botAction } from '../emulator/actions.js';
+import { botTalk, botShout, botDance, botAction, botWhisper } from '../emulator/actions.js';
+import { hostParty, canHostParty } from '../actions/host-party.js';
 import { CONFIG } from '../config.js';
 import { getClientPool } from '../habbo-client/client-pool.js';
 import { buildWalkPacket } from '../habbo-client/protocol.js';
@@ -192,6 +193,55 @@ export async function handleExternalAPI(req: IncomingMessage, res: ServerRespons
     }
     if (url === '/api/v1/actions/motto' && method === 'POST') {
       return await handleActionMotto(agent, req, res);
+    }
+
+    // Whisper
+    if (url === '/api/v1/actions/whisper' && method === 'POST') {
+      return await handleActionWhisper(agent, req, res);
+    }
+
+    // Host party
+    if (url === '/api/v1/actions/host-party' && method === 'POST') {
+      return await handleActionHostParty(agent, req, res);
+    }
+
+    // Social & relationships
+    if (url === '/api/v1/social/relationships' && method === 'GET') {
+      return await handleSocialRelationships(agent, res);
+    }
+    if (url.match(/^\/api\/v1\/social\/relationships\/[^/]+$/) && method === 'GET') {
+      const agentName = decodeURIComponent(url.split('/').pop()!);
+      return await handleSocialRelationshipDetail(agent, agentName, res);
+    }
+
+    // Agent public profile
+    if (url.match(/^\/api\/v1\/world\/agent\/[^/]+$/) && method === 'GET') {
+      const agentName = decodeURIComponent(url.split('/').pop()!);
+      return await handleWorldAgentProfile(agentName, res);
+    }
+
+    // Activity & history
+    if (url === '/api/v1/world/feed' && method === 'GET') {
+      return await handleWorldFeed(res);
+    }
+    if (url === '/api/v1/agents/me/memories' && method === 'GET') {
+      return await handleAgentMemories(agent, res);
+    }
+    if (url === '/api/v1/agents/me/stats' && method === 'GET') {
+      return await handleAgentStats(agent, res);
+    }
+
+    // Discovery
+    if (url === '/api/v1/world/leaderboard' && method === 'GET') {
+      return await handleWorldLeaderboard(res);
+    }
+    if (url === '/api/v1/world/hot-rooms' && method === 'GET') {
+      return await handleWorldHotRooms(res);
+    }
+
+    // Economy
+    if (url === '/api/v1/world/market' && method === 'GET') {
+      return await handleWorldMarket(res);
     }
 
     sendJSON(res, 404, { error: 'Not found' });
@@ -1168,6 +1218,447 @@ async function handleActionMotto(agent: ExternalAgent, req: IncomingMessage, res
   }
 
   sendJSON(res, 200, { ok: true, motto });
+  return true;
+}
+
+// --- Whisper handler ---
+
+async function handleActionWhisper(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'whisper');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Whisper cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { targetAgentName, message } = body;
+
+  if (!targetAgentName || typeof targetAgentName !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid targetAgentName (string)' });
+    return true;
+  }
+  if (!message || typeof message !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid message (string)' });
+    return true;
+  }
+  if (message.length > 100) {
+    sendJSON(res, 400, { error: 'Message too long (max 100 characters)' });
+    return true;
+  }
+
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  // Verify target is in the same room
+  const targetBot = worldRef?.agents.find(a => a.name === targetAgentName);
+  if (!targetBot) {
+    sendJSON(res, 404, { error: `Agent "${targetAgentName}" not found` });
+    return true;
+  }
+  if (targetBot.currentRoomId !== bot.currentRoomId) {
+    sendJSON(res, 400, { error: `Agent "${targetAgentName}" is not in the same room` });
+    return true;
+  }
+
+  const success = await botWhisper(agent.botId, targetAgentName, message);
+  if (!success) {
+    sendJSON(res, 502, { error: 'Failed to whisper (emulator may be down)' });
+    return true;
+  }
+
+  sendJSON(res, 200, { ok: true, target: targetAgentName, message });
+  return true;
+}
+
+// --- Host party handler ---
+
+async function handleActionHostParty(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'host_party');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Host party cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  if (!worldRef) {
+    sendJSON(res, 503, { error: 'World not ready' });
+    return true;
+  }
+
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Agent is not in any room. Move to a room first.' });
+    return true;
+  }
+
+  if (!canHostParty(bot, worldRef)) {
+    // Determine specific reason
+    const room = worldRef.rooms.find(r => r.id === bot.currentRoomId);
+    if (!room) {
+      sendJSON(res, 400, { error: 'Room not found' });
+      return true;
+    }
+    if (room.ownerId !== agent.userId && bot.preferences?.homeRoomId !== bot.currentRoomId) {
+      sendJSON(res, 400, { error: 'You can only host parties in rooms you own or your home room' });
+      return true;
+    }
+    if (bot.credits < CONFIG.PARTY_COST) {
+      sendJSON(res, 400, { error: `Not enough credits. Need ${CONFIG.PARTY_COST}, have ${bot.credits}` });
+      return true;
+    }
+    if (worldRef.activeParties.length >= CONFIG.PARTY_MAX_ACTIVE) {
+      sendJSON(res, 400, { error: 'Maximum active parties reached' });
+      return true;
+    }
+    if (worldRef.activeParties.some(p => p.roomId === bot.currentRoomId)) {
+      sendJSON(res, 400, { error: 'There is already a party in this room' });
+      return true;
+    }
+    sendJSON(res, 400, { error: 'Cannot host party (cooldown or other restriction)' });
+    return true;
+  }
+
+  await hostParty(bot, worldRef);
+
+  const room = worldRef.rooms.find(r => r.id === bot.currentRoomId);
+  sendJSON(res, 200, {
+    ok: true,
+    party: {
+      room_id: bot.currentRoomId,
+      room_name: room?.name || 'Unknown',
+      cost: CONFIG.PARTY_COST,
+    },
+  });
+  return true;
+}
+
+// --- Social & Relationships handlers ---
+
+async function handleSocialRelationships(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{ agent_id: number; target_agent_id: number; score: number; interactions: number }>(
+    `SELECT agent_id, target_agent_id, score, interactions FROM simulation_relationships WHERE agent_id = ? OR target_agent_id = ?`,
+    [agent.botId, agent.botId]
+  );
+
+  // Build lookup for agent names
+  const agentIds = new Set<number>();
+  for (const r of rows) {
+    agentIds.add(r.agent_id);
+    agentIds.add(r.target_agent_id);
+  }
+  const nameMap = new Map<number, string>();
+  if (worldRef) {
+    for (const a of worldRef.agents) {
+      if (agentIds.has(a.id)) nameMap.set(a.id, a.name);
+    }
+  }
+
+  const relationships = rows.map(r => {
+    const otherId = r.agent_id === agent.botId ? r.target_agent_id : r.agent_id;
+    return {
+      agent_name: nameMap.get(otherId) || `agent_${otherId}`,
+      score: r.score,
+      interactions: r.interactions,
+      status: r.score >= 50 ? 'close_friend' : r.score >= 20 ? 'friend' : r.score <= -30 ? 'rival' : r.score <= -10 ? 'avoid' : 'neutral',
+    };
+  });
+
+  sendJSON(res, 200, { relationships });
+  return true;
+}
+
+async function handleSocialRelationshipDetail(agent: ExternalAgent, targetName: string, res: ServerResponse): Promise<boolean> {
+  // Find target by name
+  const targetBot = worldRef?.agents.find(a => a.name === targetName);
+  if (!targetBot) {
+    sendJSON(res, 404, { error: `Agent "${targetName}" not found` });
+    return true;
+  }
+
+  const rows = await query<{ score: number; interactions: number; last_interaction: string }>(
+    `SELECT score, interactions, last_interaction FROM simulation_relationships
+     WHERE (agent_id = ? AND target_agent_id = ?) OR (agent_id = ? AND target_agent_id = ?)`,
+    [agent.botId, targetBot.id, targetBot.id, agent.botId]
+  );
+
+  if (rows.length === 0) {
+    sendJSON(res, 200, { agent_name: targetName, score: 0, interactions: 0, status: 'stranger', memories: [] });
+    return true;
+  }
+
+  const rel = rows[0];
+  const status = rel.score >= 50 ? 'close_friend' : rel.score >= 20 ? 'friend' : rel.score <= -30 ? 'rival' : rel.score <= -10 ? 'avoid' : 'neutral';
+
+  // Fetch shared memories
+  const memories = await query<{ event_type: string; summary: string; sentiment: number; created_at: string }>(
+    `SELECT event_type, summary, sentiment, created_at FROM simulation_agent_memory
+     WHERE (agent_id = ? AND target_agent_id = ?) OR (agent_id = ? AND target_agent_id = ?)
+     ORDER BY created_at DESC LIMIT 10`,
+    [agent.botId, targetBot.id, targetBot.id, agent.botId]
+  );
+
+  sendJSON(res, 200, {
+    agent_name: targetName,
+    score: rel.score,
+    interactions: rel.interactions,
+    status,
+    memories: memories.map(m => ({
+      event_type: m.event_type,
+      summary: m.summary,
+      sentiment: m.sentiment,
+      time: m.created_at,
+    })),
+  });
+  return true;
+}
+
+// --- Agent public profile ---
+
+async function handleWorldAgentProfile(agentName: string, res: ServerResponse): Promise<boolean> {
+  if (!worldRef) {
+    sendJSON(res, 503, { error: 'World not ready' });
+    return true;
+  }
+
+  const bot = worldRef.agents.find(a => a.name === agentName);
+  if (!bot) {
+    sendJSON(res, 404, { error: `Agent "${agentName}" not found` });
+    return true;
+  }
+
+  // Rooms owned
+  const roomRows = await query<{ id: number; name: string }>(
+    `SELECT id, name FROM rooms WHERE owner_id = ?`, [bot.userId]
+  );
+
+  // Motto
+  const userRows = await query<{ motto: string; credits: number }>(
+    CONFIG.USE_WEBSOCKET_AGENTS
+      ? `SELECT motto, credits FROM users WHERE id = ?`
+      : `SELECT b.motto, u.credits FROM bots b JOIN users u ON b.user_id = u.id WHERE b.id = ?`,
+    [bot.id]
+  );
+
+  // Fame score (count of positive memories + interactions)
+  const fameRows = await query<{ fame: number }>(
+    `SELECT COUNT(*) as fame FROM simulation_agent_memory WHERE agent_id = ? AND sentiment > 0`,
+    [bot.id]
+  );
+
+  sendJSON(res, 200, {
+    name: bot.name,
+    state: bot.state,
+    current_room_id: bot.currentRoomId,
+    current_room_name: worldRef.rooms.find(r => r.id === bot.currentRoomId)?.name || null,
+    motto: userRows[0]?.motto || '',
+    credits: userRows[0]?.credits || 0,
+    fame: fameRows[0]?.fame || 0,
+    rooms_owned: roomRows.map(r => ({ id: r.id, name: r.name })),
+  });
+  return true;
+}
+
+// --- Activity & History handlers ---
+
+async function handleWorldFeed(res: ServerResponse): Promise<boolean> {
+  const rows = await query<{
+    agent_id: number; target_agent_id: number | null;
+    event_type: string; summary: string; sentiment: number; created_at: string;
+  }>(
+    `SELECT agent_id, target_agent_id, event_type, summary, sentiment, created_at
+     FROM simulation_agent_memory
+     WHERE event_type IN ('trade', 'gift', 'argument', 'reunion', 'announcement', 'chat')
+     ORDER BY created_at DESC LIMIT 50`
+  );
+
+  // Build name map
+  const ids = new Set<number>();
+  for (const r of rows) {
+    ids.add(r.agent_id);
+    if (r.target_agent_id) ids.add(r.target_agent_id);
+  }
+  const nameMap = new Map<number, string>();
+  if (worldRef) {
+    for (const a of worldRef.agents) {
+      if (ids.has(a.id)) nameMap.set(a.id, a.name);
+    }
+  }
+
+  const feed = rows.map(r => ({
+    agent_name: nameMap.get(r.agent_id) || `agent_${r.agent_id}`,
+    target_name: r.target_agent_id ? (nameMap.get(r.target_agent_id) || `agent_${r.target_agent_id}`) : null,
+    event_type: r.event_type,
+    summary: r.summary,
+    sentiment: r.sentiment,
+    time: r.created_at,
+  }));
+
+  sendJSON(res, 200, { feed });
+  return true;
+}
+
+async function handleAgentMemories(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{
+    target_agent_id: number | null;
+    event_type: string; summary: string; sentiment: number;
+    room_id: number | null; created_at: string;
+  }>(
+    `SELECT target_agent_id, event_type, summary, sentiment, room_id, created_at
+     FROM simulation_agent_memory
+     WHERE agent_id = ?
+     ORDER BY created_at DESC LIMIT 30`,
+    [agent.botId]
+  );
+
+  const nameMap = new Map<number, string>();
+  if (worldRef) {
+    const ids = new Set(rows.filter(r => r.target_agent_id).map(r => r.target_agent_id!));
+    for (const a of worldRef.agents) {
+      if (ids.has(a.id)) nameMap.set(a.id, a.name);
+    }
+  }
+
+  const memories = rows.map(r => ({
+    target_name: r.target_agent_id ? (nameMap.get(r.target_agent_id) || `agent_${r.target_agent_id}`) : null,
+    event_type: r.event_type,
+    summary: r.summary,
+    sentiment: r.sentiment,
+    room_id: r.room_id,
+    time: r.created_at,
+  }));
+
+  sendJSON(res, 200, { memories });
+  return true;
+}
+
+async function handleAgentStats(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  // Total interactions
+  const interactionRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM simulation_agent_memory WHERE agent_id = ?`,
+    [agent.botId]
+  );
+
+  // Trades
+  const tradeRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM simulation_agent_memory WHERE agent_id = ? AND event_type = 'trade'`,
+    [agent.botId]
+  );
+
+  // Distinct rooms visited
+  const roomRows = await query<{ cnt: number }>(
+    `SELECT COUNT(DISTINCT room_id) as cnt FROM simulation_agent_memory WHERE agent_id = ? AND room_id IS NOT NULL`,
+    [agent.botId]
+  );
+
+  // Credits
+  const creditRows = await query<{ credits: number }>(
+    `SELECT credits FROM users WHERE id = ?`, [agent.userId]
+  );
+
+  // Relationships count
+  const relRows = await query<{ friends: number; rivals: number }>(
+    `SELECT
+       SUM(CASE WHEN score >= 20 THEN 1 ELSE 0 END) as friends,
+       SUM(CASE WHEN score <= -10 THEN 1 ELSE 0 END) as rivals
+     FROM simulation_relationships
+     WHERE agent_id = ? OR target_agent_id = ?`,
+    [agent.botId, agent.botId]
+  );
+
+  sendJSON(res, 200, {
+    total_interactions: interactionRows[0]?.cnt || 0,
+    total_trades: tradeRows[0]?.cnt || 0,
+    rooms_visited: roomRows[0]?.cnt || 0,
+    credits: creditRows[0]?.credits || 0,
+    friends: relRows[0]?.friends || 0,
+    rivals: relRows[0]?.rivals || 0,
+  });
+  return true;
+}
+
+// --- Discovery handlers ---
+
+async function handleWorldLeaderboard(res: ServerResponse): Promise<boolean> {
+  // Top by credits
+  const richest = await query<{ id: number; username: string; credits: number }>(
+    `SELECT u.id, u.username, u.credits FROM users u
+     WHERE u.username NOT LIKE 'sim_owner_%' AND u.username != 'spectator'
+     ORDER BY u.credits DESC LIMIT 20`
+  );
+
+  // Top by fame (positive memories count)
+  const famous = await query<{ agent_id: number; fame: number }>(
+    `SELECT agent_id, COUNT(*) as fame FROM simulation_agent_memory
+     WHERE sentiment > 0
+     GROUP BY agent_id ORDER BY fame DESC LIMIT 20`
+  );
+
+  // Top by interactions
+  const social = await query<{ agent_id: number; interactions: number }>(
+    `SELECT agent_id, COUNT(*) as interactions FROM simulation_agent_memory
+     GROUP BY agent_id ORDER BY interactions DESC LIMIT 20`
+  );
+
+  // Build name map
+  const nameMap = new Map<number, string>();
+  if (worldRef) {
+    for (const a of worldRef.agents) nameMap.set(a.id, a.name);
+  }
+
+  sendJSON(res, 200, {
+    richest: richest.map(r => ({ name: r.username, credits: r.credits })),
+    most_famous: famous.map(r => ({ name: nameMap.get(r.agent_id) || `agent_${r.agent_id}`, fame: r.fame })),
+    most_social: social.map(r => ({ name: nameMap.get(r.agent_id) || `agent_${r.agent_id}`, interactions: r.interactions })),
+  });
+  return true;
+}
+
+async function handleWorldHotRooms(res: ServerResponse): Promise<boolean> {
+  if (!worldRef) {
+    sendJSON(res, 503, { error: 'World not ready' });
+    return true;
+  }
+
+  const hotRooms = worldRef.rooms
+    .map(r => {
+      const hasParty = worldRef.activeParties.some(p => p.roomId === r.id) ? 1 : 0;
+      const recentChat = (worldRef.roomChatHistory.get(r.id) || []).length;
+      const hotness = r.currentPopulation * 3 + hasParty * 20 + recentChat;
+      return {
+        id: r.id,
+        name: r.name,
+        owner_name: r.ownerName,
+        purpose: r.purpose,
+        population: r.currentPopulation,
+        has_party: !!hasParty,
+        hotness,
+      };
+    })
+    .sort((a, b) => b.hotness - a.hotness)
+    .slice(0, 20);
+
+  sendJSON(res, 200, { rooms: hotRooms });
+  return true;
+}
+
+// --- Economy handler ---
+
+async function handleWorldMarket(res: ServerResponse): Promise<boolean> {
+  const rows = await query<{ item_name: string; avg_price: number; last_price: number; volume: number; updated_at: string }>(
+    `SELECT item_name, avg_price, last_price, volume, updated_at FROM simulation_market_prices ORDER BY volume DESC`
+  );
+
+  sendJSON(res, 200, {
+    prices: rows.map(r => ({
+      item_name: r.item_name,
+      avg_price: r.avg_price,
+      last_price: r.last_price,
+      volume: r.volume,
+      updated_at: r.updated_at,
+    })),
+  });
   return true;
 }
 

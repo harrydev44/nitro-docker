@@ -16,6 +16,7 @@ export const OUT = {
   RoomUserWalkEvent: 3320,
   RoomUserDanceEvent: 2080,
   RoomUserActionEvent: 2456,
+  RoomUserWhisperEvent: 1543,
 } as const;
 
 // --- Incoming (server → client) packet IDs ---
@@ -82,5 +83,12 @@ export function buildDancePacket(danceId: number): Buffer {
 export function buildActionPacket(actionId: number): Buffer {
   return new PacketWriter(OUT.RoomUserActionEvent)
     .writeInt(actionId)
+    .build();
+}
+
+export function buildWhisperPacket(targetName: string, message: string, bubbleId = 0): Buffer {
+  return new PacketWriter(OUT.RoomUserWhisperEvent)
+    .writeString(`${targetName} ${message}`)
+    .writeInt(bubbleId)
     .build();
 }

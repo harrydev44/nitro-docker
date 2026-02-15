@@ -1,7 +1,6 @@
 import { CONFIG } from '../config.js';
 import { queueBotChat, queueBotShout, queueRelationshipChange, queueMemory } from '../world/batch-writer.js';
 import { getCachedRelationship } from '../world/state-cache.js';
-import { generateDramaChat } from '../ai/chat-generator.js';
 import {
   getArgumentAttack, getArgumentDefense,
   getReunionGreeting, getReunionResponse,
@@ -63,19 +62,8 @@ async function executeArgument(agent: Agent, target: Agent, world: WorldState, r
   let attackMsg: string;
   let defenseMsg: string;
 
-  if (Math.random() < CONFIG.DRAMA_AI_PROBABILITY) {
-    const aiAttack = await generateDramaChat(agent, target, 'argument', world.tick);
-    attackMsg = aiAttack || getArgumentAttack(target.name);
-  } else {
-    attackMsg = getArgumentAttack(target.name);
-  }
-
-  if (Math.random() < CONFIG.DRAMA_AI_PROBABILITY) {
-    const aiDefense = await generateDramaChat(target, agent, 'argument', world.tick);
-    defenseMsg = aiDefense || getArgumentDefense(agent.name);
-  } else {
-    defenseMsg = getArgumentDefense(agent.name);
-  }
+  attackMsg = getArgumentAttack(target.name);
+  defenseMsg = getArgumentDefense(agent.name);
 
   // Attacker SHOUTS with angry bubble, defender talks with dark bubble
   const attackBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('argument') : -1;
@@ -121,19 +109,8 @@ async function executeReunion(agent: Agent, target: Agent, world: WorldState, ro
   let greetMsg: string;
   let responseMsg: string;
 
-  if (Math.random() < CONFIG.DRAMA_AI_PROBABILITY) {
-    const aiGreet = await generateDramaChat(agent, target, 'reunion', world.tick);
-    greetMsg = aiGreet || getReunionGreeting(target.name);
-  } else {
-    greetMsg = getReunionGreeting(target.name);
-  }
-
-  if (Math.random() < CONFIG.DRAMA_AI_PROBABILITY) {
-    const aiResponse = await generateDramaChat(target, agent, 'reunion', world.tick);
-    responseMsg = aiResponse || getReunionResponse(agent.name);
-  } else {
-    responseMsg = getReunionResponse(agent.name);
-  }
+  greetMsg = getReunionGreeting(target.name);
+  responseMsg = getReunionResponse(agent.name);
 
   // Reunion uses hearts/roses bubbles
   const greetBubble = CONFIG.STYLED_BUBBLES_ENABLED ? pickBubbleForContext('reunion') : -1;
@@ -188,12 +165,7 @@ async function executeGift(agent: Agent, target: Agent, world: WorldState, roomN
   let giveMsg: string;
   let thanksMsg: string;
 
-  if (Math.random() < CONFIG.DRAMA_AI_PROBABILITY) {
-    const aiGive = await generateDramaChat(agent, target, 'gift', world.tick);
-    giveMsg = aiGive || getGiftMessage(target.name);
-  } else {
-    giveMsg = getGiftMessage(target.name);
-  }
+  giveMsg = getGiftMessage(target.name);
 
   thanksMsg = getGiftThanks(agent.name);
 

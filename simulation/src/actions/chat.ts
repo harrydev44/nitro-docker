@@ -6,7 +6,6 @@ import { getReaction } from '../chat/reactions.js';
 import { getOpinion } from '../chat/announcements.js';
 import { getMemoryGossip } from '../chat/gossip.js';
 import { getCachedMemories } from '../world/state-cache.js';
-import { generateAIChat } from '../ai/chat-generator.js';
 import { shouldGesture, pickGesture } from '../chat/gesture-triggers.js';
 import { botAction } from '../emulator/actions.js';
 import { getNearbyFreeTile, getBotPosition } from '../world/room-models.js';
@@ -27,39 +26,29 @@ export async function agentChat(agent: Agent, world: WorldState): Promise<void> 
   let message: string;
   let isAnnouncement = false;
 
-  // 0. Check for active conversation in this room — reply to it (AI priority)
+  // 0. Check for active conversation in this room — reply with template
   const convo = world.activeConversations.get(agent.currentRoomId!);
   if (convo && convo.lastSpeakerId !== agent.id && convo.participants.has(agent.id)) {
     // Walk toward conversation partner (proximity)
     moveTowardSpeaker(agent, convo.lastSpeakerId, room.model);
 
-    const aiReply = await generateAIChat(agent, roommates, room, history, world.tick, {
-      lastSpeakerName: convo.lastSpeakerName,
-      lastMessage: convo.lastMessage,
-    });
-    if (aiReply) {
-      message = aiReply;
-      // Update conversation state
-      convo.lastSpeakerId = agent.id;
-      convo.lastSpeakerName = agent.name;
-      convo.lastMessage = message;
-      convo.lastTick = world.tick;
-      convo.exchangeCount++;
+    const speaker = world.agents.find(a => a.id === convo.lastSpeakerId);
+    message = speaker ? getReply(agent, speaker, convo.lastMessage) : getRoomChat(agent, room.purpose);
 
-      queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);
-      trackChat(agent, world, room, roommates, message, false);
-      return;
-    }
-    // AI unavailable — fall through to normal chat
+    // Update conversation state
+    convo.lastSpeakerId = agent.id;
+    convo.lastSpeakerName = agent.name;
+    convo.lastMessage = message;
+    convo.lastTick = world.tick;
+    convo.exchangeCount++;
+
+    queueBotChat(agent.id, message, CONFIG.MIN_CHAT_DELAY);
+    trackChat(agent, world, room, roommates, message, false);
+    return;
   }
 
-  // 1. ALWAYS try AI first — this is the primary chat path
-  const aiMessage = await generateAIChat(agent, roommates, room, history, world.tick);
-  if (aiMessage) {
-    message = aiMessage;
-  }
-  // 2. Template fallbacks only when AI is on cooldown or unavailable
-  else if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
+  // 1. Template-based chat selection
+  if (history.length === 0 || agent.ticksInCurrentRoom <= 1) {
     const target = roommates[Math.floor(Math.random() * roommates.length)];
     message = getGreeting(agent, target);
   } else if (Math.random() < 0.05) {

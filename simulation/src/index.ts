@@ -249,11 +249,7 @@ async function main(): Promise<void> {
   } else {
     console.log('[MODE] Bot agents (RCON)');
   }
-  if (CONFIG.AI_ENABLED) {
-    console.log(`[AI] OpenRouter enabled (${CONFIG.AI_MODEL})`);
-  } else {
-    console.log('[AI] OpenRouter disabled (no OPENROUTER_API_KEY)');
-  }
+  console.log('[AI] Internal AI disabled — NPCs use templates only');
 
   await ensureSimulationTables();
   await loadExternalAgents();
