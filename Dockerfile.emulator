@@ -1,0 +1,41 @@
+# Stage 1: Build Arcturus emulator
+FROM amazoncorretto:8 AS build
+
+WORKDIR /build
+
+RUN yum update -y && \
+    yum install -y maven git wget && \
+    yum clean all
+
+# Copy emulator source and build
+COPY emulator/arcturus/ ./arcturus/
+RUN cd arcturus && mvn package -q
+
+# Download NitroWebsockets plugin
+RUN mkdir -p plugins && \
+    wget -q -O plugins/NitroWebsockets-3.1.jar \
+    https://git.krews.org/morningstar/nitrowebsockets-for-ms/-/raw/aff34551b54527199401b343a35f16076d1befd5/target/NitroWebsockets-3.1.jar
+
+# Stage 2: Runtime
+FROM amazoncorretto:8
+
+WORKDIR /app
+
+RUN yum update -y && \
+    yum install -y mysql && \
+    yum clean all
+
+# Copy built JAR and plugins
+COPY --from=build /build/arcturus/target/Habbo-3.5.0-jar-with-dependencies.jar ./Habbo-3.5.0-jar-with-dependencies.jar
+COPY --from=build /build/plugins/ ./plugins/
+
+# Copy SQL dumps for DB seeding
+COPY mysql/dumps/*.sql ./sql/
+
+# Copy startup script
+COPY emulator/scripts/start.sh ./start.sh
+RUN chmod +x ./start.sh
+
+EXPOSE 2096
+
+CMD ["bash", "/app/start.sh"]

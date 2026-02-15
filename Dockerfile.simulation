@@ -1,0 +1,20 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY simulation/package.json simulation/package-lock.json* ./
+RUN npm install
+
+# Copy source and build
+COPY simulation/tsconfig.json ./
+COPY simulation/src/ ./src/
+
+# Copy public directory (stats server static files)
+COPY simulation/public/ ./public/
+
+RUN npm run build
+
+EXPOSE 3333
+
+CMD ["node", "--enable-source-maps", "dist/index.js"]

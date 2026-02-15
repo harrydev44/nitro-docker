@@ -1,0 +1,37 @@
+# Stage 1: Build Nitro React client
+FROM node:20-alpine AS build
+
+WORKDIR /build
+
+# Copy and install dependencies
+COPY nitro/nitro-react/package.json nitro/nitro-react/yarn.lock* ./
+RUN yarn install --frozen-lockfile || yarn install
+
+# Copy source and build
+COPY nitro/nitro-react/ ./
+RUN yarn build
+
+# Stage 2: Nginx runtime
+FROM nginx:alpine
+
+RUN apk add --no-cache bash
+
+# Copy built client
+COPY --from=build /build/dist/ /usr/share/nginx/html/
+
+# Copy static assets
+COPY nitro/nitro-assets/ /usr/share/nginx/assets/
+COPY nitro/nitro-swf/ /usr/share/nginx/swf/
+
+# Copy config templates (start.sh will sed-replace dynamic values at runtime)
+COPY nitro/configuration/nitro-react/public/renderer-config.json /usr/share/nginx/html/renderer-config.json
+COPY nitro/configuration/nitro-react/public/ui-config.json /usr/share/nginx/html/ui-config.json
+
+# Copy nginx config and startup script
+COPY nitro/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nitro/scripts/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+EXPOSE 80
+
+CMD ["bash", "/app/start.sh"]
