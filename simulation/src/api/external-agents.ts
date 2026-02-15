@@ -110,7 +110,7 @@ export async function registerExternalAgent(
   }
 
   const userResult = await execute(
-    `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+    `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, \`rank\`, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
      VALUES (?, ?, 'external', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'External Agent', 'hr-115-42.hd-195-19.ch-3030-82.lg-275-1408', 'M', 1, 5000, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
     [username, name]
   );

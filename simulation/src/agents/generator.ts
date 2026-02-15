@@ -45,7 +45,7 @@ async function generateWSAgents(): Promise<void> {
     );
 
     const result = await execute(
-      `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+      `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, \`rank\`, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
        VALUES (?, ?, 'simulation', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), ?, ?, ?, 1, ?, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
       [username, name, motto, figure, gender, credits]
     );
@@ -72,7 +72,7 @@ async function generateWSAgents(): Promise<void> {
     );
     if (existing.length === 0) {
       await execute(
-        `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+        `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, \`rank\`, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
          VALUES (?, ?, 'simulation', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'Simulation Owner', 'hr-115-42.hd-195-19.ch-3030-82.lg-275-1408', 'M', 7, 50000, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
         [username, username]
       );
@@ -106,7 +106,7 @@ async function generateBotAgents(): Promise<void> {
     }
 
     const result = await execute(
-      `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, rank, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
+      `INSERT INTO users (username, real_name, password, mail, account_created, last_login, last_online, motto, look, gender, \`rank\`, credits, pixels, points, online, auth_ticket, ip_register, ip_current)
        VALUES (?, ?, 'simulation', '', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'Simulation Owner', ?, 'M', 7, ?, 0, 0, '0', '', '127.0.0.1', '127.0.0.1')`,
       [username, username, look, credits]
     );
