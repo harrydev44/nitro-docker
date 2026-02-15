@@ -123,13 +123,13 @@ export async function registerExternalAgent(
     // In WS mode, external agent's botId = userId (no bot table entry needed)
     botId = userId;
 
-    // Connect the new agent via WebSocket
+    // Connect the new agent via WebSocket and add to pool
     try {
       const pool = getClientPool();
-      const { HabboConnection } = await import('../habbo-client/connection.js');
-      const conn = new HabboConnection(userId);
-      await conn.connect();
-    } catch {}
+      await pool.addAgent(userId);
+    } catch (err: any) {
+      console.warn(`[EXT] Failed to connect WS for ${name}: ${err.message}`);
+    }
   } else {
     const figure = generateFigure();
     const gender = generateGender();

@@ -63,6 +63,21 @@ export class ClientPool {
   }
 
   /**
+   * Add a single agent connection to the pool (used for external agents).
+   */
+  async addAgent(agentId: number): Promise<boolean> {
+    const conn = new HabboConnection(agentId);
+    this.connections.set(agentId, conn);
+    const ok = await conn.connect();
+    if (!ok) {
+      console.warn(`[POOL] Failed to connect external agent ${agentId}`);
+      return false;
+    }
+    console.log(`[POOL] External agent ${agentId} connected`);
+    return true;
+  }
+
+  /**
    * Get a connection by agent ID (userId).
    */
   get(agentId: number): HabboConnection | null {
