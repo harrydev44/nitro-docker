@@ -13,9 +13,18 @@ interface OpenRouterResponse {
 let activeRequests = 0;
 const agentLastCallTick = new Map<number, number>();
 
+// Circuit breaker: stop calling OpenRouter after repeated failures
+let consecutiveFailures = 0;
+let circuitBrokenUntil = 0;
+const CIRCUIT_BREAKER_THRESHOLD = 5;   // failures before tripping
+const CIRCUIT_BREAKER_COOLDOWN = 60_000; // 60s before retrying
+
 export function canCallAI(agentId: number, currentTick: number, cooldownOverride?: number): boolean {
   if (!CONFIG.AI_ENABLED) return false;
   if (activeRequests >= CONFIG.AI_MAX_CONCURRENT) return false;
+
+  // Circuit breaker: skip all AI calls when tripped
+  if (circuitBrokenUntil > Date.now()) return false;
 
   const cooldown = cooldownOverride ?? CONFIG.AI_COOLDOWN_TICKS;
   const lastTick = agentLastCallTick.get(agentId);
@@ -56,18 +65,32 @@ export async function chatCompletion(
     clearTimeout(timeout);
 
     if (!res.ok) {
-      console.warn(`[AI] OpenRouter ${res.status}: ${res.statusText}`);
+      consecutiveFailures++;
+      if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        circuitBrokenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN;
+        console.warn(`[AI] Circuit breaker tripped after ${consecutiveFailures} failures (${res.status}: ${res.statusText}). Pausing AI for 60s.`);
+      } else if (consecutiveFailures === 1) {
+        console.warn(`[AI] OpenRouter ${res.status}: ${res.statusText}`);
+      }
       return null;
+    }
+
+    // Success — reset circuit breaker
+    if (consecutiveFailures > 0) {
+      console.log(`[AI] OpenRouter recovered after ${consecutiveFailures} failures`);
+      consecutiveFailures = 0;
     }
 
     const data = (await res.json()) as OpenRouterResponse;
     const content = data.choices?.[0]?.message?.content?.trim();
     return content || null;
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.warn(`[AI] Request timed out for agent ${agentId}`);
-    } else {
-      console.warn(`[AI] Request failed for agent ${agentId}:`, err.message);
+    consecutiveFailures++;
+    if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD && circuitBrokenUntil <= Date.now()) {
+      circuitBrokenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN;
+      console.warn(`[AI] Circuit breaker tripped (${err.name === 'AbortError' ? 'timeout' : err.message}). Pausing AI for 60s.`);
+    } else if (consecutiveFailures <= 1) {
+      console.warn(`[AI] ${err.name === 'AbortError' ? 'Timeout' : err.message} for agent ${agentId}`);
     }
     return null;
   } finally {
