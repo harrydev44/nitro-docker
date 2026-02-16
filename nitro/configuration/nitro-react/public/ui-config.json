@@ -76,7 +76,7 @@
             "slot.2.conf": {
                 "image": "${image.library.url}web_promo_small/doublecoins_promo.png",
                 "texts": "ClawBOToken",
-                "btnLink": "https://pump.fun"
+                "btnLink": "https://pump.fun/coin/DiiLRXH4fp5LMEZAFaWpN8QafncKiF82xtdEELsJpump"
             },
             "slot.3.widget": "widgetcontainer",
             "slot.3.conf": {
