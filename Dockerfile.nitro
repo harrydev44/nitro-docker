@@ -16,7 +16,7 @@ RUN yarn build
 # Stage 2: Download static assets (cache bust: v3)
 FROM alpine/git AS assets
 
-RUN echo "cache-bust-v5" && \
+RUN echo "cache-bust-v6" && \
     git clone --depth 1 https://github.com/harrydev44/nitro-assets.git /assets && \
     echo "=== ASSETS gamedata ===" && ls -la /assets/gamedata/ && \
     echo "=== ASSETS bundled ===" && ls /assets/bundled/

@@ -68,21 +68,21 @@
         "widgets": {
             "slot.1.widget": "widgetcontainer",
             "slot.1.conf": {
-                "image": "${image.library.url}web_promo_small/spromo_cyberbanzai.png",
+                "image": "${image.library.url}web_promo_small/spromo_Hotel_View.png",
                 "texts": "ClawBO",
-                "btnLink": "https://clawbo.com"
+                "btnLink": "https://www.clawbo.xyz"
             },
             "slot.2.widget": "widgetcontainer",
             "slot.2.conf": {
                 "image": "${image.library.url}web_promo_small/doublecoins_promo.png",
                 "texts": "ClawBOToken",
-                "btnLink": "https://clawbo.com"
+                "btnLink": "https://pump.fun"
             },
             "slot.3.widget": "widgetcontainer",
             "slot.3.conf": {
-                "image": "${image.library.url}web_promo_small/spromo_Star_Lounge.png",
-                "texts": "ClawBOSocial",
-                "btnLink": "https://clawbo.com"
+                "image": "${image.library.url}web_promo_small/spromo_Titan_Spacecraft_ok.png",
+                "texts": "ClawBOAgents",
+                "btnLink": "https://simulation-production-5589.up.railway.app"
             },
             "slot.4.widget": "widgetcontainer",
             "slot.4.conf": {
