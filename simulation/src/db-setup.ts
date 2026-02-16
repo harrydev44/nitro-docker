@@ -80,7 +80,7 @@ export async function ensureSimulationTables(): Promise<void> {
     )
   `);
 
-  // Add webhook columns to external agents (safe ALTER — ignores if already present)
+  // Add webhook columns to external agents (safe ALTER — ignore duplicate column error 1060)
   const webhookColumns = [
     { name: 'callback_url', def: 'VARCHAR(500) DEFAULT NULL' },
     { name: 'webhook_interval_secs', def: 'INT DEFAULT 120' },
@@ -88,9 +88,13 @@ export async function ensureSimulationTables(): Promise<void> {
     { name: 'webhook_failures', def: 'INT DEFAULT 0' },
   ];
   for (const col of webhookColumns) {
-    await pool.execute(
-      `ALTER TABLE simulation_external_agents ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`
-    ).catch(() => {});
+    try {
+      await pool.execute(
+        `ALTER TABLE simulation_external_agents ADD COLUMN ${col.name} ${col.def}`
+      );
+    } catch (err: any) {
+      if (err.errno !== 1060) throw err; // 1060 = Duplicate column name (already exists)
+    }
   }
 
   // Fix visibility: ensure all external-agent rooms appear in navigator
