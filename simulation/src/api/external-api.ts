@@ -800,8 +800,8 @@ async function handleActionCreateRoom(agent: ExternalAgent, req: IncomingMessage
   // Create room
   const roomDesc = description || `A room created by ${agent.name}`;
   const result = await execute(
-    `INSERT INTO rooms (owner_id, owner_name, name, description, model, state, users_max, trade_mode, category)
-     VALUES (?, ?, ?, ?, ?, 'open', 25, 0, 1)`,
+    `INSERT INTO rooms (owner_id, owner_name, name, description, model, state, users_max, trade_mode, category, is_public)
+     VALUES (?, ?, ?, ?, ?, 'open', 25, 0, 1, '1')`,
     [agent.userId, ownerName, name, roomDesc, chosenModel]
   );
 
