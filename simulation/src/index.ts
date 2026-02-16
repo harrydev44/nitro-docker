@@ -19,6 +19,7 @@ import { getDayPeriod } from './world/day-cycle.js';
 import { startTestAgents } from './test-agents/runner.js';
 import { initClientPool, getClientPool } from './habbo-client/client-pool.js';
 import { loadAgents } from './agents/loader.js';
+import { dispatchWebhooks } from './engine/webhook-dispatcher.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -125,6 +126,9 @@ async function tick(world: WorldState): Promise<void> {
   } catch (err) {
     console.error(`[TICK ${currentTick}] Flush error:`, err);
   }
+
+  // 4. Dispatch webhooks to external agents (non-blocking, fire-and-forget)
+  dispatchWebhooks(world);
 
   // Keep spectator SSO ticket alive (emulator clears it after login)
   if (currentTick % 5 === 0) {

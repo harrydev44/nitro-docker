@@ -80,6 +80,19 @@ export async function ensureSimulationTables(): Promise<void> {
     )
   `);
 
+  // Add webhook columns to external agents (safe ALTER — ignores if already present)
+  const webhookColumns = [
+    { name: 'callback_url', def: 'VARCHAR(500) DEFAULT NULL' },
+    { name: 'webhook_interval_secs', def: 'INT DEFAULT 120' },
+    { name: 'last_webhook_at', def: 'DATETIME DEFAULT NULL' },
+    { name: 'webhook_failures', def: 'INT DEFAULT 0' },
+  ];
+  for (const col of webhookColumns) {
+    await pool.execute(
+      `ALTER TABLE simulation_external_agents ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`
+    ).catch(() => {});
+  }
+
   // Fix visibility: ensure all external-agent rooms appear in navigator
   await pool.execute(`
     UPDATE rooms SET is_public = '1'

@@ -15,6 +15,10 @@ export interface ExternalAgent {
   lastHeartbeat: Date;
   requestCount: number;
   createdAt: Date;
+  callbackUrl: string | null;
+  webhookIntervalSecs: number;
+  lastWebhookAt: Date | null;
+  webhookFailures: number;
 }
 
 // In-memory cache: apiKey -> ExternalAgent
@@ -31,6 +35,8 @@ export async function loadExternalAgents(): Promise<void> {
     id: number; api_key: string; bot_id: number; user_id: number;
     name: string; description: string | null; status: string;
     last_heartbeat: Date; request_count: number; created_at: Date;
+    callback_url: string | null; webhook_interval_secs: number;
+    last_webhook_at: Date | null; webhook_failures: number;
   }>(`SELECT * FROM simulation_external_agents WHERE status = 'active'`);
 
   agentCache.clear();
@@ -48,6 +54,10 @@ export async function loadExternalAgents(): Promise<void> {
       lastHeartbeat: row.last_heartbeat,
       requestCount: row.request_count,
       createdAt: row.created_at,
+      callbackUrl: row.callback_url,
+      webhookIntervalSecs: row.webhook_interval_secs || 120,
+      lastWebhookAt: row.last_webhook_at,
+      webhookFailures: row.webhook_failures || 0,
     };
     agentCache.set(agent.apiKey, agent);
     botIdCache.set(agent.botId, agent);
@@ -70,7 +80,9 @@ export function getExternalAgentCount(): number {
 
 export async function registerExternalAgent(
   name: string,
-  description?: string
+  description?: string,
+  callbackUrl?: string,
+  webhookIntervalSecs?: number
 ): Promise<{ agent: ExternalAgent; apiKey: string } | { error: string }> {
   // Validate name
   if (!name || name.length < 2 || name.length > 15) {
@@ -169,19 +181,30 @@ export async function registerExternalAgent(
     [botId, JSON.stringify(personality), JSON.stringify(preferences)]
   );
 
-  // 4. Create external agent record
+  // 4. Validate callback URL if provided
+  let validatedCallbackUrl: string | null = null;
+  if (callbackUrl) {
+    const urlError = validateCallbackUrl(callbackUrl);
+    if (urlError) return { error: urlError };
+    validatedCallbackUrl = callbackUrl;
+  }
+  const interval = Math.min(300, Math.max(60, webhookIntervalSecs || CONFIG.WEBHOOK_DEFAULT_INTERVAL_SECS));
+
+  // 5. Create external agent record
   const apiKey = generateApiKey();
 
   await execute(
-    `INSERT INTO simulation_external_agents (api_key, bot_id, user_id, name, description)
-     VALUES (?, ?, ?, ?, ?)`,
-    [apiKey, botId, userId, name, description || null]
+    `INSERT INTO simulation_external_agents (api_key, bot_id, user_id, name, description, callback_url, webhook_interval_secs)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey, botId, userId, name, description || null, validatedCallbackUrl, interval]
   );
 
   const extRows = await query<{
     id: number; api_key: string; bot_id: number; user_id: number;
     name: string; description: string | null; status: string;
     last_heartbeat: Date; request_count: number; created_at: Date;
+    callback_url: string | null; webhook_interval_secs: number;
+    last_webhook_at: Date | null; webhook_failures: number;
   }>(`SELECT * FROM simulation_external_agents WHERE api_key = ?`, [apiKey]);
 
   const agent: ExternalAgent = {
@@ -195,6 +218,10 @@ export async function registerExternalAgent(
     lastHeartbeat: extRows[0].last_heartbeat,
     requestCount: 0,
     createdAt: extRows[0].created_at,
+    callbackUrl: validatedCallbackUrl,
+    webhookIntervalSecs: interval,
+    lastWebhookAt: null,
+    webhookFailures: 0,
   };
 
   // Add to cache
@@ -216,4 +243,70 @@ export async function updateHeartbeat(agent: ExternalAgent): Promise<void> {
       [agent.requestCount, agent.id]
     ).catch(() => {});
   }
+}
+
+// --- Webhook helpers ---
+
+function validateCallbackUrl(url: string): string | null {
+  if (url.length > 500) return 'callback_url too long (max 500 characters)';
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return 'callback_url must use http or https';
+    }
+  } catch {
+    return 'callback_url is not a valid URL';
+  }
+  return null;
+}
+
+export function getWebhookAgents(): ExternalAgent[] {
+  const result: ExternalAgent[] = [];
+  for (const agent of agentCache.values()) {
+    if (agent.status === 'active' && agent.callbackUrl) {
+      result.push(agent);
+    }
+  }
+  return result;
+}
+
+export async function updateWebhookStatus(agent: ExternalAgent, success: boolean): Promise<void> {
+  if (success) {
+    agent.webhookFailures = 0;
+    agent.lastWebhookAt = new Date();
+    await execute(
+      `UPDATE simulation_external_agents SET last_webhook_at = NOW(), webhook_failures = 0 WHERE id = ?`,
+      [agent.id]
+    ).catch(() => {});
+  } else {
+    agent.webhookFailures++;
+    await execute(
+      `UPDATE simulation_external_agents SET webhook_failures = ? WHERE id = ?`,
+      [agent.webhookFailures, agent.id]
+    ).catch(() => {});
+  }
+}
+
+export async function updateAgentCallbackUrl(
+  agent: ExternalAgent,
+  callbackUrl: string | null,
+  intervalSecs?: number
+): Promise<string | null> {
+  if (callbackUrl !== null) {
+    const err = validateCallbackUrl(callbackUrl);
+    if (err) return err;
+  }
+
+  agent.callbackUrl = callbackUrl;
+  if (intervalSecs !== undefined) {
+    agent.webhookIntervalSecs = Math.min(300, Math.max(60, intervalSecs));
+  }
+  // Reset failures when URL changes
+  agent.webhookFailures = 0;
+
+  await execute(
+    `UPDATE simulation_external_agents SET callback_url = ?, webhook_interval_secs = ?, webhook_failures = 0 WHERE id = ?`,
+    [agent.callbackUrl, agent.webhookIntervalSecs, agent.id]
+  );
+  return null;
 }

@@ -106,6 +106,12 @@ export const CONFIG = {
   // External agent API
   MAX_EXTERNAL_AGENTS: 50,
 
+  // Webhook dispatcher
+  WEBHOOK_MAX_PER_TICK: 2,
+  WEBHOOK_TIMEOUT_MS: 12_000,
+  WEBHOOK_MAX_FAILURES: 5,
+  WEBHOOK_DEFAULT_INTERVAL_SECS: 120,
+
   // WebSocket agent mode
   USE_WEBSOCKET_AGENTS: process.env.USE_WEBSOCKET_AGENTS === 'true',
   WS_EMULATOR_URL: process.env.WS_EMULATOR_URL || 'ws://127.0.0.1:2096',

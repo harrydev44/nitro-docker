@@ -8,7 +8,7 @@ import { hostParty, canHostParty } from '../actions/host-party.js';
 import { CONFIG } from '../config.js';
 import { getClientPool } from '../habbo-client/client-pool.js';
 import { buildWalkPacket } from '../habbo-client/protocol.js';
-import { authenticateAgent, registerExternalAgent, updateHeartbeat, getExternalAgentCount } from './external-agents.js';
+import { authenticateAgent, registerExternalAgent, updateHeartbeat, getExternalAgentCount, updateAgentCallbackUrl } from './external-agents.js';
 import { checkGlobalRate, checkActionRate } from './rate-limiter.js';
 import { FURNITURE_CATALOG } from '../actions/buy.js';
 import { MODELS } from '../actions/create-room.js';
@@ -274,14 +274,14 @@ function handleSkillMd(res: ServerResponse): boolean {
 
 async function handleRegister(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const body = await parseBody(req);
-  const { name, description } = body;
+  const { name, description, callback_url, webhook_interval_secs } = body;
 
   if (!name) {
     sendJSON(res, 400, { error: 'Missing required field: name' });
     return true;
   }
 
-  const result = await registerExternalAgent(name, description);
+  const result = await registerExternalAgent(name, description, callback_url, webhook_interval_secs);
 
   if ('error' in result) {
     sendJSON(res, 400, { error: result.error });
@@ -295,9 +295,13 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse): Promis
       name: result.agent.name,
       bot_id: result.agent.botId,
       description: result.agent.description,
+      callback_url: result.agent.callbackUrl,
+      webhook_interval_secs: result.agent.webhookIntervalSecs,
       created_at: result.agent.createdAt,
     },
-    instructions: 'Use this API key in the Authorization header: Bearer <api_key>. Poll GET /api/v1/world/me to see your surroundings.',
+    instructions: result.agent.callbackUrl
+      ? 'Webhook mode active. The simulation will POST context to your callback_url periodically. Respond with {"action":"chat","params":{"message":"..."}}'
+      : 'Use this API key in the Authorization header: Bearer <api_key>. Poll GET /api/v1/world/me to see your surroundings.',
   });
   return true;
 }
@@ -334,6 +338,10 @@ async function handleAgentMe(agent: ExternalAgent, res: ServerResponse): Promise
     inventory_count: inventoryCount,
     rooms_owned: roomsOwned,
     request_count: agent.requestCount,
+    callback_url: agent.callbackUrl,
+    webhook_interval_secs: agent.webhookIntervalSecs,
+    webhook_failures: agent.webhookFailures,
+    last_webhook_at: agent.lastWebhookAt,
     created_at: agent.createdAt,
   });
   return true;
@@ -348,7 +356,26 @@ async function handleAgentUpdate(agent: ExternalAgent, req: IncomingMessage, res
       [body.description, agent.id]
     );
   }
-  sendJSON(res, 200, { ok: true, name: agent.name, description: agent.description });
+  if (body.callback_url !== undefined) {
+    const err = await updateAgentCallbackUrl(
+      agent,
+      body.callback_url,
+      body.webhook_interval_secs
+    );
+    if (err) {
+      sendJSON(res, 400, { error: err });
+      return true;
+    }
+  } else if (body.webhook_interval_secs !== undefined) {
+    await updateAgentCallbackUrl(agent, agent.callbackUrl, body.webhook_interval_secs);
+  }
+  sendJSON(res, 200, {
+    ok: true,
+    name: agent.name,
+    description: agent.description,
+    callback_url: agent.callbackUrl,
+    webhook_interval_secs: agent.webhookIntervalSecs,
+  });
   return true;
 }
 
@@ -1675,7 +1702,7 @@ async function handleWorldMarket(res: ServerResponse): Promise<boolean> {
 
 // --- Helpers ---
 
-function getBotFromWorld(botId: number) {
+export function getBotFromWorld(botId: number) {
   if (!worldRef) return null;
   // Check sim agents first, then external bot state
   const simBot = worldRef.agents.find(a => a.id === botId);
