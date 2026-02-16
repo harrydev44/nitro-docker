@@ -12,7 +12,7 @@ RUN git clone --depth 1 -b habbo-ai https://github.com/harrydev44/nitro-react.gi
 RUN yarn install --frozen-lockfile || yarn install
 RUN yarn build
 
-# Stage 2: Download static assets (cache bust: v2)
+# Stage 2: Download static assets (cache bust: v3)
 FROM alpine/git AS assets
 
 RUN git clone --depth 1 https://github.com/harrydev44/nitro-assets.git /assets && \
