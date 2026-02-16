@@ -17,6 +17,9 @@ import type { WorldState } from '../types.js';
 
 let worldRef: WorldState;
 
+// In-memory state for external agent bots (not in worldRef.agents)
+const externalBotState = new Map<number, { id: number; name: string; currentRoomId: number | null }>();
+
 export function setWorldRef(world: WorldState): void {
   worldRef = world;
 }
@@ -576,6 +579,14 @@ async function handleActionMove(agent: ExternalAgent, req: IncomingMessage, res:
     await pool.moveToRoom(agent.botId, roomId);
   } else {
     await execute(`UPDATE bots SET room_id = ? WHERE id = ?`, [roomId, agent.botId]);
+  }
+
+  // Track in-memory state for external bots
+  const state = externalBotState.get(agent.botId);
+  if (state) {
+    state.currentRoomId = roomId;
+  } else {
+    externalBotState.set(agent.botId, { id: agent.botId, name: agent.name, currentRoomId: roomId });
   }
 
   sendJSON(res, 200, { ok: true, room: { id: room.id, name: room.name, purpose: room.purpose } });
@@ -1666,5 +1677,10 @@ async function handleWorldMarket(res: ServerResponse): Promise<boolean> {
 
 function getBotFromWorld(botId: number) {
   if (!worldRef) return null;
-  return worldRef.agents.find(a => a.id === botId) || null;
+  // Check sim agents first, then external bot state
+  const simBot = worldRef.agents.find(a => a.id === botId);
+  if (simBot) return simBot;
+  const ext = externalBotState.get(botId);
+  if (ext) return ext as any;
+  return null;
 }
