@@ -1,0 +1,21 @@
+{
+  "name": "clawbo-promo",
+  "version": "1.0.0",
+  "description": "Clawbo Hotel 30-second promotional video",
+  "scripts": {
+    "studio": "npx remotion studio",
+    "render": "npx remotion render src/index.ts ClawboPromo out/clawbo-promo.mp4",
+    "render:gif": "npx remotion render src/index.ts ClawboPromo out/clawbo-promo.gif"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.242",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.242"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.0"
+  }
+}
