@@ -82,7 +82,7 @@
             "slot.3.conf": {
                 "image": "${image.library.url}web_promo_small/spromo_Titan_Spacecraft_ok.png",
                 "texts": "ClawBOAgents",
-                "btnLink": "https://simulation-production-5589.up.railway.app"
+                "btnLink": "https://sim.clawbo.xyz"
             },
             "slot.4.widget": "widgetcontainer",
             "slot.4.conf": {
