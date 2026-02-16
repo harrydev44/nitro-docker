@@ -5,8 +5,9 @@ RUN apk add --no-cache git
 
 WORKDIR /build
 
-# Clone nitro-react source
-RUN git clone --depth 1 -b habbo-ai https://github.com/harrydev44/nitro-react.git .
+# Clone nitro-react source (cache bust: v2)
+RUN echo "react-cache-bust-v2" && \
+    git clone --depth 1 -b habbo-ai https://github.com/harrydev44/nitro-react.git .
 
 # Install dependencies and build
 RUN yarn install --frozen-lockfile || yarn install
