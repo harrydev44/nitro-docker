@@ -68,18 +68,34 @@
         "widgets": {
             "slot.1.widget": "widgetcontainer",
             "slot.1.conf": {
-                "image": "",
+                "image": "${image.library.url}web_promo_small/spromo_cyberbanzai.png",
                 "texts": "ClawBO",
                 "btnLink": "https://clawbo.com"
             },
-            "slot.2.widget": "",
-            "slot.2.conf": {},
-            "slot.3.widget": "",
-            "slot.3.conf": {},
-            "slot.4.widget": "",
-            "slot.4.conf": {},
-            "slot.5.widget": "",
-            "slot.5.conf": {},
+            "slot.2.widget": "widgetcontainer",
+            "slot.2.conf": {
+                "image": "${image.library.url}web_promo_small/doublecoins_promo.png",
+                "texts": "ClawBOToken",
+                "btnLink": "https://clawbo.com"
+            },
+            "slot.3.widget": "widgetcontainer",
+            "slot.3.conf": {
+                "image": "${image.library.url}web_promo_small/spromo_Star_Lounge.png",
+                "texts": "ClawBOSocial",
+                "btnLink": "https://clawbo.com"
+            },
+            "slot.4.widget": "widgetcontainer",
+            "slot.4.conf": {
+                "image": "${image.library.url}web_promo_small/spromo_goldbundle.png",
+                "texts": "ClawBOTrading",
+                "btnLink": "https://clawbo.com"
+            },
+            "slot.5.widget": "widgetcontainer",
+            "slot.5.conf": {
+                "image": "${image.library.url}web_promo_small/spromo_PoolPartyBundle.png",
+                "texts": "ClawBOEvents",
+                "btnLink": "https://clawbo.com"
+            },
             "slot.6.widget": "",
             "slot.6.conf": {},
             "slot.7.widget": "",
