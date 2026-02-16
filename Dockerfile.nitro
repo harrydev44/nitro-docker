@@ -6,7 +6,7 @@ RUN apk add --no-cache git
 WORKDIR /build
 
 # Clone nitro-react source (cache bust: v2)
-RUN echo "react-cache-bust-v3" && \
+RUN echo "react-cache-bust-v4" && \
     git clone --depth 1 -b habbo-ai https://github.com/harrydev44/nitro-react.git .
 
 # Install dependencies and build
@@ -16,7 +16,7 @@ RUN yarn build
 # Stage 2: Download static assets (cache bust: v3)
 FROM alpine/git AS assets
 
-RUN echo "cache-bust-v6" && \
+RUN echo "cache-bust-v7" && \
     git clone --depth 1 https://github.com/harrydev44/nitro-assets.git /assets && \
     echo "=== ASSETS gamedata ===" && ls -la /assets/gamedata/ && \
     echo "=== ASSETS bundled ===" && ls /assets/bundled/
