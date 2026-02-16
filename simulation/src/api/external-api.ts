@@ -12,6 +12,9 @@ import { authenticateAgent, registerExternalAgent, updateHeartbeat, getExternalA
 import { checkGlobalRate, checkActionRate } from './rate-limiter.js';
 import { FURNITURE_CATALOG } from '../actions/buy.js';
 import { MODELS } from '../actions/create-room.js';
+import { JOB_TYPES } from '../config.js';
+import { getActiveEvents, hasActiveEvent } from '../engine/room-events.js';
+import { getAgentQuests, startQuest, claimQuest, trackQuestProgress } from '../engine/quest-tracker.js';
 import type { ExternalAgent } from './external-agents.js';
 import type { WorldState } from '../types.js';
 
@@ -245,6 +248,65 @@ export async function handleExternalAPI(req: IncomingMessage, res: ServerRespons
     // Economy
     if (url === '/api/v1/world/market' && method === 'GET') {
       return await handleWorldMarket(res);
+    }
+
+    // Agent notes (key-value store)
+    if (url === '/api/v1/agents/me/notes' && method === 'GET') {
+      return await handleGetNotes(agent, res);
+    }
+    if (url.match(/^\/api\/v1\/agents\/me\/notes\/[^/]+$/) && method === 'PUT') {
+      const key = decodeURIComponent(url.split('/').pop()!);
+      return await handlePutNote(agent, key, req, res);
+    }
+    if (url.match(/^\/api\/v1\/agents\/me\/notes\/[^/]+$/) && method === 'DELETE') {
+      const key = decodeURIComponent(url.split('/').pop()!);
+      return await handleDeleteNote(agent, key, res);
+    }
+
+    // Direct messages
+    if (url === '/api/v1/actions/dm' && method === 'POST') {
+      return await handleActionDM(agent, req, res);
+    }
+    if (url === '/api/v1/social/messages' && method === 'GET') {
+      return await handleGetMessages(agent, res);
+    }
+    if (url.match(/^\/api\/v1\/social\/messages\/[^/]+$/) && method === 'GET') {
+      const name = decodeURIComponent(url.split('/').pop()!);
+      return await handleGetConversation(agent, name, res);
+    }
+
+    // Reviews
+    if (url === '/api/v1/actions/review' && method === 'POST') {
+      return await handleActionReview(agent, req, res);
+    }
+
+    // Sit on furniture
+    if (url === '/api/v1/actions/sit' && method === 'POST') {
+      return await handleActionSit(agent, req, res);
+    }
+
+    // Work (earn credits)
+    if (url === '/api/v1/actions/work' && method === 'POST') {
+      return await handleActionWork(agent, res);
+    }
+    if (url === '/api/v1/world/jobs' && method === 'GET') {
+      return handleWorldJobs(res);
+    }
+
+    // Quests
+    if (url === '/api/v1/world/quests' && method === 'GET') {
+      return await handleWorldQuests(agent, res);
+    }
+    if (url === '/api/v1/actions/start-quest' && method === 'POST') {
+      return await handleActionStartQuest(agent, req, res);
+    }
+    if (url === '/api/v1/actions/claim-quest' && method === 'POST') {
+      return await handleActionClaimQuest(agent, req, res);
+    }
+
+    // World events
+    if (url === '/api/v1/world/events' && method === 'GET') {
+      return handleWorldEvents(res);
     }
 
     sendJSON(res, 404, { error: 'Not found' });
@@ -616,6 +678,7 @@ async function handleActionMove(agent: ExternalAgent, req: IncomingMessage, res:
     externalBotState.set(agent.botId, { id: agent.botId, name: agent.name, currentRoomId: roomId });
   }
 
+  trackQuestProgress(agent.botId, 'move').catch(() => {});
   sendJSON(res, 200, { ok: true, room: { id: room.id, name: room.name, purpose: room.purpose } });
   return true;
 }
@@ -665,6 +728,7 @@ async function handleActionChat(agent: ExternalAgent, req: IncomingMessage, res:
     worldRef.roomChatHistory.set(bot.currentRoomId, history);
   }
 
+  trackQuestProgress(agent.botId, 'chat').catch(() => {});
   sendJSON(res, 200, { ok: true, message });
   return true;
 }
@@ -955,6 +1019,7 @@ async function handleActionBuy(agent: ExternalAgent, req: IncomingMessage, res: 
     },
     credits_remaining: credits - catalogItem.cost,
   });
+  trackQuestProgress(agent.botId, 'buy').catch(() => {});
   return true;
 }
 
@@ -1185,6 +1250,7 @@ async function handleActionTrade(agent: ExternalAgent, req: IncomingMessage, res
     return true;
   }
 
+  trackQuestProgress(agent.botId, 'trade').catch(() => {});
   sendJSON(res, 200, {
     ok: true,
     trade: {
@@ -1369,6 +1435,7 @@ async function handleActionHostParty(agent: ExternalAgent, req: IncomingMessage,
       cost: CONFIG.PARTY_COST,
     },
   });
+  trackQuestProgress(agent.botId, 'host_party').catch(() => {});
   return true;
 }
 
@@ -1485,6 +1552,16 @@ async function handleWorldAgentProfile(agentName: string, res: ServerResponse): 
     [bot.id]
   );
 
+  // Reviews
+  const reviewRows = await query<{ reviewer_name: string; rating: number; comment: string | null; created_at: string }>(
+    `SELECT reviewer_name, rating, comment, created_at FROM simulation_agent_reviews WHERE target_id = ? ORDER BY created_at DESC LIMIT 10`,
+    [bot.id]
+  );
+  const avgRatingRows = await query<{ avg_rating: number; review_count: number }>(
+    `SELECT AVG(rating) as avg_rating, COUNT(*) as review_count FROM simulation_agent_reviews WHERE target_id = ?`,
+    [bot.id]
+  );
+
   sendJSON(res, 200, {
     name: bot.name,
     state: bot.state,
@@ -1494,6 +1571,14 @@ async function handleWorldAgentProfile(agentName: string, res: ServerResponse): 
     credits: userRows[0]?.credits || 0,
     fame: fameRows[0]?.fame || 0,
     rooms_owned: roomRows.map(r => ({ id: r.id, name: r.name })),
+    avg_rating: avgRatingRows[0]?.avg_rating ? Math.round(avgRatingRows[0].avg_rating * 10) / 10 : null,
+    review_count: avgRatingRows[0]?.review_count || 0,
+    reviews: reviewRows.map(r => ({
+      from: r.reviewer_name,
+      rating: r.rating,
+      comment: r.comment,
+      time: r.created_at,
+    })),
   });
   return true;
 }
@@ -1697,6 +1782,401 @@ async function handleWorldMarket(res: ServerResponse): Promise<boolean> {
       updated_at: r.updated_at,
     })),
   });
+  return true;
+}
+
+// --- Agent Notes handlers ---
+
+async function handleGetNotes(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{ note_key: string; note_value: string; updated_at: string }>(
+    `SELECT note_key, note_value, updated_at FROM simulation_external_agent_notes WHERE agent_id = ? ORDER BY updated_at DESC`,
+    [agent.botId]
+  );
+  sendJSON(res, 200, {
+    notes: Object.fromEntries(rows.map(r => [r.note_key, r.note_value])),
+    count: rows.length,
+  });
+  return true;
+}
+
+async function handlePutNote(agent: ExternalAgent, key: string, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  if (key.length > 50) {
+    sendJSON(res, 400, { error: 'Key too long (max 50 chars)' });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const value = body.value;
+  if (typeof value !== 'string') {
+    sendJSON(res, 400, { error: 'Missing or invalid value (string)' });
+    return true;
+  }
+  if (value.length > 2000) {
+    sendJSON(res, 400, { error: 'Value too long (max 2000 chars)' });
+    return true;
+  }
+
+  // Check note limit
+  const countRows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM simulation_external_agent_notes WHERE agent_id = ?`, [agent.botId]
+  );
+  const existingRows = await query<{ note_key: string }>(
+    `SELECT note_key FROM simulation_external_agent_notes WHERE agent_id = ? AND note_key = ?`, [agent.botId, key]
+  );
+  if (existingRows.length === 0 && (countRows[0]?.cnt || 0) >= CONFIG.MAX_NOTES_PER_AGENT) {
+    sendJSON(res, 400, { error: `Note limit reached (max ${CONFIG.MAX_NOTES_PER_AGENT})` });
+    return true;
+  }
+
+  await execute(
+    `INSERT INTO simulation_external_agent_notes (agent_id, note_key, note_value) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE note_value = ?, updated_at = NOW()`,
+    [agent.botId, key, value, value]
+  );
+  sendJSON(res, 200, { ok: true, key, value });
+  return true;
+}
+
+async function handleDeleteNote(agent: ExternalAgent, key: string, res: ServerResponse): Promise<boolean> {
+  await execute(
+    `DELETE FROM simulation_external_agent_notes WHERE agent_id = ? AND note_key = ?`,
+    [agent.botId, key]
+  );
+  sendJSON(res, 200, { ok: true, key });
+  return true;
+}
+
+// --- Direct Message handlers ---
+
+async function handleActionDM(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'dm');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'DM cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { targetAgentName, message } = body;
+
+  if (!targetAgentName || typeof targetAgentName !== 'string') {
+    sendJSON(res, 400, { error: 'Missing targetAgentName' });
+    return true;
+  }
+  if (!message || typeof message !== 'string' || message.length > CONFIG.MAX_DM_LENGTH) {
+    sendJSON(res, 400, { error: `Missing or invalid message (max ${CONFIG.MAX_DM_LENGTH} chars)` });
+    return true;
+  }
+
+  // Find target agent
+  const targetBot = worldRef?.agents.find(a => a.name === targetAgentName);
+  if (!targetBot) {
+    sendJSON(res, 404, { error: `Agent "${targetAgentName}" not found` });
+    return true;
+  }
+
+  await execute(
+    `INSERT INTO simulation_direct_messages (from_agent_id, to_agent_id, from_name, to_name, message) VALUES (?, ?, ?, ?, ?)`,
+    [agent.botId, targetBot.id, agent.name, targetAgentName, message]
+  );
+
+  trackQuestProgress(agent.botId, 'dm').catch(() => {});
+  sendJSON(res, 200, { ok: true, to: targetAgentName, message });
+  return true;
+}
+
+async function handleGetMessages(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{
+    id: number; from_name: string; to_name: string; message: string;
+    read_at: string | null; created_at: string;
+  }>(
+    `SELECT id, from_name, to_name, message, read_at, created_at
+     FROM simulation_direct_messages
+     WHERE to_agent_id = ? OR from_agent_id = ?
+     ORDER BY created_at DESC LIMIT 50`,
+    [agent.botId, agent.botId]
+  );
+
+  // Mark unread messages as read
+  await execute(
+    `UPDATE simulation_direct_messages SET read_at = NOW() WHERE to_agent_id = ? AND read_at IS NULL`,
+    [agent.botId]
+  ).catch(() => {});
+
+  const unreadCount = rows.filter(r => !r.read_at && r.to_name === agent.name).length;
+
+  sendJSON(res, 200, {
+    messages: rows.map(r => ({
+      from: r.from_name,
+      to: r.to_name,
+      message: r.message,
+      read: !!r.read_at,
+      time: r.created_at,
+    })),
+    unread_count: unreadCount,
+  });
+  return true;
+}
+
+async function handleGetConversation(agent: ExternalAgent, targetName: string, res: ServerResponse): Promise<boolean> {
+  const rows = await query<{
+    from_name: string; to_name: string; message: string; created_at: string;
+  }>(
+    `SELECT from_name, to_name, message, created_at
+     FROM simulation_direct_messages
+     WHERE (from_name = ? AND to_name = ?) OR (from_name = ? AND to_name = ?)
+     ORDER BY created_at DESC LIMIT 30`,
+    [agent.name, targetName, targetName, agent.name]
+  );
+
+  sendJSON(res, 200, {
+    with: targetName,
+    messages: rows.map(r => ({
+      from: r.from_name,
+      message: r.message,
+      time: r.created_at,
+    })),
+  });
+  return true;
+}
+
+// --- Review handler ---
+
+async function handleActionReview(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'review');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Review cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { targetAgentName, rating, comment } = body;
+
+  if (!targetAgentName || typeof targetAgentName !== 'string') {
+    sendJSON(res, 400, { error: 'Missing targetAgentName' });
+    return true;
+  }
+  if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
+    sendJSON(res, 400, { error: 'Rating must be 1-5 integer' });
+    return true;
+  }
+  if (comment && (typeof comment !== 'string' || comment.length > 100)) {
+    sendJSON(res, 400, { error: 'Comment too long (max 100 chars)' });
+    return true;
+  }
+
+  const targetBot = worldRef?.agents.find(a => a.name === targetAgentName);
+  if (!targetBot) {
+    sendJSON(res, 404, { error: `Agent "${targetAgentName}" not found` });
+    return true;
+  }
+  if (targetBot.id === agent.botId) {
+    sendJSON(res, 400, { error: 'Cannot review yourself' });
+    return true;
+  }
+
+  await execute(
+    `INSERT INTO simulation_agent_reviews (reviewer_id, target_id, reviewer_name, target_name, rating, comment)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE rating = ?, comment = ?, created_at = NOW()`,
+    [agent.botId, targetBot.id, agent.name, targetAgentName, rating, comment || null, rating, comment || null]
+  );
+
+  trackQuestProgress(agent.botId, 'review').catch(() => {});
+  sendJSON(res, 200, { ok: true, target: targetAgentName, rating, comment: comment || null });
+  return true;
+}
+
+// --- Sit handler ---
+
+async function handleActionSit(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'sit');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Sit cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Not in any room' });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { itemId } = body;
+
+  // If itemId specified, walk to that furniture
+  if (typeof itemId === 'number') {
+    const itemRows = await query<{ x: number; y: number; room_id: number }>(
+      `SELECT x, y, room_id FROM items WHERE id = ?`, [itemId]
+    );
+    if (!itemRows.length || itemRows[0].room_id !== bot.currentRoomId) {
+      sendJSON(res, 404, { error: 'Item not found in your room' });
+      return true;
+    }
+
+    if (CONFIG.USE_WEBSOCKET_AGENTS) {
+      const pool = getClientPool();
+      pool.send(agent.botId, buildWalkPacket(itemRows[0].x, itemRows[0].y));
+    } else {
+      await execute(`UPDATE bots SET x = ?, y = ? WHERE id = ?`, [itemRows[0].x, itemRows[0].y, agent.botId]);
+    }
+
+    sendJSON(res, 200, { ok: true, x: itemRows[0].x, y: itemRows[0].y, itemId });
+    return true;
+  }
+
+  // No itemId — find nearest sittable furniture (chairs, sofas, couches)
+  const sittableIds = [18, 30, 39, 35, 28, 29]; // chairs, sofas, couches
+  const furniture = await query<{ id: number; item_id: number; x: number; y: number }>(
+    `SELECT id, item_id, x, y FROM items WHERE room_id = ? AND item_id IN (${sittableIds.join(',')}) LIMIT 1`,
+    [bot.currentRoomId]
+  );
+
+  if (furniture.length === 0) {
+    sendJSON(res, 400, { error: 'No sittable furniture in this room' });
+    return true;
+  }
+
+  const chair = furniture[0];
+  if (CONFIG.USE_WEBSOCKET_AGENTS) {
+    const pool = getClientPool();
+    pool.send(agent.botId, buildWalkPacket(chair.x, chair.y));
+  } else {
+    await execute(`UPDATE bots SET x = ?, y = ? WHERE id = ?`, [chair.x, chair.y, agent.botId]);
+  }
+
+  sendJSON(res, 200, { ok: true, x: chair.x, y: chair.y, itemId: chair.id });
+  return true;
+}
+
+// --- Work handler ---
+
+async function handleActionWork(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'work');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Work cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const bot = getBotFromWorld(agent.botId);
+  if (!bot?.currentRoomId) {
+    sendJSON(res, 400, { error: 'Not in any room. Move to a job room first.' });
+    return true;
+  }
+
+  const room = worldRef?.rooms.find(r => r.id === bot.currentRoomId);
+  if (!room) {
+    sendJSON(res, 400, { error: 'Room not found' });
+    return true;
+  }
+
+  // Find a job that matches this room's purpose
+  const job = Object.entries(JOB_TYPES).find(([, v]) => v.rooms.includes(room.purpose));
+  if (!job) {
+    sendJSON(res, 400, { error: `No jobs available in ${room.purpose} rooms. Try: ${Object.entries(JOB_TYPES).map(([k, v]) => `${k} (${v.rooms.join('/')})`).join(', ')}` });
+    return true;
+  }
+
+  const [jobName, jobDef] = job;
+
+  // Check for happy_hour event (double pay)
+  const pay = hasActiveEvent(worldRef!, bot.currentRoomId, 'happy_hour')
+    ? jobDef.pay * 2
+    : jobDef.pay;
+
+  await execute(
+    `UPDATE users SET credits = credits + ? WHERE id = ?`,
+    [pay, agent.userId]
+  );
+
+  trackQuestProgress(agent.botId, 'work').catch(() => {});
+  sendJSON(res, 200, {
+    ok: true,
+    job: jobName,
+    room_purpose: room.purpose,
+    credits_earned: pay,
+    happy_hour: pay > jobDef.pay,
+  });
+  return true;
+}
+
+function handleWorldJobs(res: ServerResponse): boolean {
+  const jobs = Object.entries(JOB_TYPES).map(([name, def]) => ({
+    name,
+    pay: def.pay,
+    room_types: def.rooms,
+  }));
+  sendJSON(res, 200, { jobs });
+  return true;
+}
+
+// --- Quest handlers ---
+
+async function handleWorldQuests(agent: ExternalAgent, res: ServerResponse): Promise<boolean> {
+  const quests = await getAgentQuests(agent.botId);
+  sendJSON(res, 200, quests);
+  return true;
+}
+
+async function handleActionStartQuest(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const body = await parseBody(req);
+  const { questId } = body;
+
+  if (typeof questId !== 'number') {
+    sendJSON(res, 400, { error: 'Missing questId (number)' });
+    return true;
+  }
+
+  const err = await startQuest(agent.botId, questId);
+  if (err) {
+    sendJSON(res, 400, { error: err });
+    return true;
+  }
+
+  sendJSON(res, 200, { ok: true, questId });
+  return true;
+}
+
+async function handleActionClaimQuest(agent: ExternalAgent, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const rateCheck = checkActionRate(agent.id, 'claim_quest');
+  if (!rateCheck.allowed) {
+    sendJSON(res, 429, { error: 'Claim cooldown active', retryAfterMs: rateCheck.retryAfterMs });
+    return true;
+  }
+
+  const body = await parseBody(req);
+  const { questId } = body;
+
+  if (typeof questId !== 'number') {
+    sendJSON(res, 400, { error: 'Missing questId (number)' });
+    return true;
+  }
+
+  const result = await claimQuest(agent.botId, agent.userId, questId);
+  if (result.error) {
+    sendJSON(res, 400, { error: result.error });
+    return true;
+  }
+
+  sendJSON(res, 200, { ok: true, questId, credits_rewarded: result.reward });
+  return true;
+}
+
+// --- World Events handler ---
+
+function handleWorldEvents(res: ServerResponse): boolean {
+  if (!worldRef) {
+    sendJSON(res, 503, { error: 'World not ready' });
+    return true;
+  }
+  const events = getActiveEvents(worldRef).map(e => ({
+    type: e.type,
+    room_id: e.roomId,
+    room_name: e.roomName,
+    description: e.description,
+    ticks_remaining: e.endTick - worldRef.tick,
+  }));
+  sendJSON(res, 200, { events });
   return true;
 }
 

@@ -25,6 +25,11 @@ const ACTION_COOLDOWNS: Record<string, number> = {
   motto: 30,
   whisper: 5,
   host_party: 120,
+  dm: 5,
+  review: 30,
+  work: 60,
+  sit: 5,
+  claim_quest: 10,
 };
 
 const GLOBAL_LIMIT = 60;          // requests per minute

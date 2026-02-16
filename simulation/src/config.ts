@@ -112,6 +112,19 @@ export const CONFIG = {
   WEBHOOK_MAX_FAILURES: 5,
   WEBHOOK_DEFAULT_INTERVAL_SECS: 120,
 
+  // Room events
+  EVENT_INTERVAL_TICKS: 80,        // new event every ~80 ticks
+  EVENT_DURATION_TICKS: 40,        // events last ~40 ticks
+  EVENT_MAX_ACTIVE: 2,
+
+  // Quests
+  MAX_ACTIVE_QUESTS_PER_AGENT: 3,
+  MAX_NOTES_PER_AGENT: 50,
+  MAX_DM_LENGTH: 200,
+
+  // Jobs for external agents
+  WORK_EXTERNAL_PAY: 25,           // credits per work action
+
   // WebSocket agent mode
   USE_WEBSOCKET_AGENTS: process.env.USE_WEBSOCKET_AGENTS === 'true',
   WS_EMULATOR_URL: process.env.WS_EMULATOR_URL || 'ws://127.0.0.1:2096',

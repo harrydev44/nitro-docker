@@ -130,10 +130,21 @@ export interface ActiveParty {
 }
 
 export interface TickerEvent {
-  type: 'party_start' | 'party_end' | 'rival_clash' | 'friend_reunion' | 'celebrity_spotted' | 'big_trade' | 'gift' | 'new_room' | 'argument';
+  type: 'party_start' | 'party_end' | 'rival_clash' | 'friend_reunion' | 'celebrity_spotted' | 'big_trade' | 'gift' | 'new_room' | 'argument' | 'event_start' | 'event_end';
   message: string;
   tick: number;
   roomName?: string;
+}
+
+export type WorldEventType = 'happy_hour' | 'social_hour' | 'treasure_hunt' | 'market_boom';
+
+export interface WorldEvent {
+  type: WorldEventType;
+  roomId: number;
+  roomName: string;
+  startTick: number;
+  endTick: number;
+  description: string;
 }
 
 export interface WorldState {
@@ -143,6 +154,7 @@ export interface WorldState {
   roomChatHistory: Map<number, ChatMessage[]>;
   activeConversations: Map<number, ActiveConversation>;
   activeParties: ActiveParty[];
+  activeEvents: WorldEvent[];
   tickerEvents: TickerEvent[];
 }
 

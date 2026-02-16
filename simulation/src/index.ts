@@ -20,6 +20,8 @@ import { startTestAgents } from './test-agents/runner.js';
 import { initClientPool, getClientPool } from './habbo-client/client-pool.js';
 import { loadAgents } from './agents/loader.js';
 import { dispatchWebhooks } from './engine/webhook-dispatcher.js';
+import { tickRoomEvents } from './engine/room-events.js';
+import { loadQuests } from './engine/quest-tracker.js';
 import type { WorldState } from './types.js';
 
 const SPECTATOR_SSO_TICKET = 'spectator-sso-ticket';
@@ -129,6 +131,9 @@ async function tick(world: WorldState): Promise<void> {
 
   // 4. Dispatch webhooks to external agents (non-blocking, fire-and-forget)
   dispatchWebhooks(world);
+
+  // 5. Room events (spawn/expire periodic events)
+  tickRoomEvents(world);
 
   // Keep spectator SSO ticket alive (emulator clears it after login)
   if (currentTick % 5 === 0) {
@@ -257,6 +262,7 @@ async function main(): Promise<void> {
 
   await ensureSimulationTables();
   await loadExternalAgents();
+  await loadQuests();
   await loadRoomModels();
   await loadItemCatalog();
   await seedStartingItems();
@@ -286,6 +292,7 @@ async function main(): Promise<void> {
     roomChatHistory: new Map(),
     activeConversations: new Map(),
     activeParties: [],
+    activeEvents: [],
     tickerEvents: [],
   };
 

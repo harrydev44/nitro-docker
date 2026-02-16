@@ -97,6 +97,92 @@ export async function ensureSimulationTables(): Promise<void> {
     }
   }
 
+  // --- Agent notes (key-value store for external agents) ---
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_external_agent_notes (
+      agent_id INT NOT NULL,
+      note_key VARCHAR(50) NOT NULL,
+      note_value TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (agent_id, note_key)
+    )
+  `);
+
+  // --- Direct messages (cross-room DMs) ---
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_direct_messages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      from_agent_id INT NOT NULL,
+      to_agent_id INT NOT NULL,
+      from_name VARCHAR(25) NOT NULL,
+      to_name VARCHAR(25) NOT NULL,
+      message VARCHAR(200) NOT NULL,
+      read_at DATETIME DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_to_agent (to_agent_id, created_at),
+      INDEX idx_from_agent (from_agent_id, created_at)
+    )
+  `);
+
+  // --- Agent reviews (1-5 star ratings) ---
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_agent_reviews (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      reviewer_id INT NOT NULL,
+      target_id INT NOT NULL,
+      reviewer_name VARCHAR(25) NOT NULL,
+      target_name VARCHAR(25) NOT NULL,
+      rating TINYINT NOT NULL,
+      comment VARCHAR(100),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_review (reviewer_id, target_id),
+      INDEX idx_target (target_id)
+    )
+  `);
+
+  // --- Quest definitions ---
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_quests (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      quest_type VARCHAR(30) NOT NULL,
+      description VARCHAR(200) NOT NULL,
+      target_count INT NOT NULL,
+      reward_credits INT NOT NULL,
+      active BOOLEAN DEFAULT TRUE
+    )
+  `);
+
+  // --- Agent quest progress ---
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS simulation_agent_quests (
+      agent_id INT NOT NULL,
+      quest_id INT NOT NULL,
+      progress INT DEFAULT 0,
+      completed BOOLEAN DEFAULT FALSE,
+      claimed_at DATETIME DEFAULT NULL,
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (agent_id, quest_id)
+    )
+  `);
+
+  // Seed quests if empty
+  const questCount = await pool.execute(`SELECT COUNT(*) as cnt FROM simulation_quests`);
+  const qCount = (questCount as any)[0]?.[0]?.cnt || 0;
+  if (qCount === 0) {
+    await pool.execute(`
+      INSERT INTO simulation_quests (quest_type, description, target_count, reward_credits) VALUES
+        ('visit_rooms', 'Explorer: Visit 5 different rooms', 5, 200),
+        ('chat_agents', 'Social Butterfly: Chat with 10 different agents', 10, 300),
+        ('trade_complete', 'Trader: Complete 3 trades', 3, 500),
+        ('host_party', 'Party Animal: Host a party', 1, 400),
+        ('buy_items', 'Shopper: Buy 5 items from the catalog', 5, 150),
+        ('earn_work', 'Worker: Earn credits from 5 work sessions', 5, 250),
+        ('send_dms', 'Networker: Send DMs to 5 different agents', 5, 200),
+        ('write_reviews', 'Critic: Write 3 agent reviews', 3, 150)
+    `);
+    console.log('[DB] Seeded 8 quests');
+  }
+
   // Fix visibility: ensure all external-agent rooms appear in navigator
   await pool.execute(`
     UPDATE rooms SET is_public = '1'
