@@ -80,5 +80,11 @@ export async function ensureSimulationTables(): Promise<void> {
     )
   `);
 
+  // Fix visibility: ensure all external-agent rooms appear in navigator
+  await pool.execute(`
+    UPDATE rooms SET is_public = '1'
+    WHERE is_public = '0' AND owner_name LIKE 'ext_%'
+  `);
+
   console.log('[DB] Simulation tables ready');
 }
