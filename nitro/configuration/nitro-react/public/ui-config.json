@@ -91,8 +91,8 @@
             "background": "${asset.url}/images/reception/stretch_blue.png",
             "background.colour": "#6eadc8",
             "sun": "${asset.url}/images/reception/sun.png",
-            "drape": "${asset.url}/images/reception/drape.png",
-            "left": "${asset.url}/images/reception/ts.png",
+            "drape": "",
+            "left": "${asset.url}/images/reception/br_large.png",
             "right": "${asset.url}/images/reception/US_right.png",
             "right.repeat": "${asset.url}/images/reception/US_top_right.png"
         }
